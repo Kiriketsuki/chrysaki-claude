@@ -456,20 +456,29 @@ pulse_color() {
   printf "\033[38;2;%d;%d;%dm" "$pr" "$pg" "$pb"
 }
 
-# Pre-compute pulsed colour escapes for 5h/7d sections
-# Base RGB: C_WARN=#b8a038 (184,160,56)  C_ERROR=#c04050 (192,64,80)
+# Pre-compute pulsed colour escapes for 5h/7d sections.
+# Base RGB derives from the palette warn/error hexes.
+hex_rgb() {
+  local h="${1#\#}"
+  printf '%d %d %d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"
+}
+_warn_rgb=$(hex_rgb "${CC_WARN:-#b8a038}")
+_error_rgb=$(hex_rgb "${CC_ERROR:-#c04050}")
+_emerald_rgb=$(hex_rgb "${CC_EMERALD_LT:-#1a8a6a}")
+_sec_rgb=$(hex_rgb "${CC_SEC:-#a0a4b8}")
+_teal_rgb=$(hex_rgb "${CC_TEAL:-#1e8898}")
 if [ "$five_h_pulse" -eq 1 ] && [ "$NO_COLOUR" -eq 0 ]; then
   if [ -n "$five_h" ] && [ "$five_h" -ge 75 ] 2>/dev/null; then
-    five_h_color=$(pulse_color 192 64 80)
+    five_h_color=$(pulse_color $_error_rgb)
   else
-    five_h_color=$(pulse_color 184 160 56)
+    five_h_color=$(pulse_color $_warn_rgb)
   fi
 fi
 if [ "$seven_d_pulse" -eq 1 ] && [ "$NO_COLOUR" -eq 0 ]; then
   if [ -n "$seven_d" ] && [ "$seven_d" -ge 75 ] 2>/dev/null; then
-    seven_d_color=$(pulse_color 192 64 80)
+    seven_d_color=$(pulse_color $_error_rgb)
   else
-    seven_d_color=$(pulse_color 184 160 56)
+    seven_d_color=$(pulse_color $_warn_rgb)
   fi
 fi
 
@@ -827,7 +836,7 @@ _bridge_color="$C_BR_L2"
 if [ -n "$five_h" ]; then
   five_h_marker=$(section_marker "$five_h" 50 75)
   printf "%b %s 5h   %b" "$five_h_color" "$five_h_marker" "$R"
-  progress_bar "$five_h" 26 138 106 50 184 160 56 75 192 64 80
+  progress_bar "$five_h" $_emerald_rgb 50 $_warn_rgb 75 $_error_rgb
   printf "  %b%s%b" "$five_h_color" "$five_h_pct_str" "$R"
   if [ -n "$delta5" ] && [ "$compact_level" -lt 1 ]; then
     printf "  %b(%s)%b" "$five_h_color" "$delta5" "$R"
@@ -838,7 +847,7 @@ fi
 if [ -n "$seven_d" ]; then
   seven_d_marker=$(section_marker "$seven_d" 50 75)
   printf "%b%s 7d   %b" "$seven_d_color" "$seven_d_marker" "$R"
-  progress_bar "$seven_d" 160 164 184 50 184 160 56 75 192 64 80
+  progress_bar "$seven_d" $_sec_rgb 50 $_warn_rgb 75 $_error_rgb
   printf "  %b%s%b" "$seven_d_color" "$seven_d_pct_str" "$R"
   if [ -n "$delta7" ] && [ "$compact_level" -lt 1 ]; then
     printf "  %b(%s)%b" "$seven_d_color" "$delta7" "$R"
@@ -895,7 +904,7 @@ handoff_center_w=0
 
 if [ -n "$ctx_str" ]; then
   printf "%b %s ctx  %b" "$ctx_color" "$ctx_marker" "$R"
-  progress_bar "$used_int" 30 136 152 50 200 120 56 80 192 64 80
+  progress_bar "$used_int" $_teal_rgb 50 200 120 56 80 $_error_rgb
   printf "  %b%s%b" "$ctx_color" "$ctx_pct_str" "$R"
   [ -n "$ctx_tokens_str" ] && printf "  %b(%s)%b" "$ctx_color" "$ctx_tokens_str" "$R"
 
