@@ -1,0 +1,4 @@
+.claude/
+*.stackdump
+.gitnexus
+node_modules/

@@ -1,0 +1,19 @@
+{
+  "name": "@kiriketsuki/chrysaki-claude",
+  "version": "2.1.0",
+  "description": "Chrysaki theme integration for Claude Code: four-line status bar, stats fetcher, cost export",
+  "license": "MIT",
+  "repository": "github:Kiriketsuki/chrysaki-claude",
+  "keywords": [
+    "chrysaki",
+    "claude-code",
+    "statusline"
+  ],
+  "scripts": {
+    "sync-palette": "node scripts/sync-palette.mjs",
+    "check-palette": "node scripts/sync-palette.mjs --check"
+  },
+  "dependencies": {
+    "@kiriketsuki/chrysaki-core": "github:Kiriketsuki/chrysaki-core#v1.0.0"
+  }
+}
