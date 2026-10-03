@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+
+# --- mod fallback ---
+# The chrysaki-statusline mod sets CHRYSAKI_STATUSLINE_MOD=1 when it loads, and
+# Claude Code passes the variable to this script. The mod then draws the
+# statusline above the prompt, so this script prints nothing. Without the mod,
+# this script is the statusline. Set CHRYSAKI_STATUSLINE_BOTH=1 to keep both.
+if [ "${CHRYSAKI_STATUSLINE_MOD:-}" = "1" ] && [ "${CHRYSAKI_STATUSLINE_BOTH:-}" != "1" ]; then
+  cat >/dev/null
+  exit 0
+fi
+
 # Platform-specific PATH augmentation
 case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*)

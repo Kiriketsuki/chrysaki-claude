@@ -1,0 +1,29 @@
+{
+  "name": "chrysaki-statusline",
+  "version": "0.1.0",
+  "description": "The Chrysaki four-line statusline as a band above the prompt",
+  "author": { "name": "Kiriketsuki" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "barStyle": {
+      "type": "string",
+      "title": "Bar style",
+      "description": "Progress bar glyphs, as CHRYSAKI_BAR_STYLE",
+      "default": "wave",
+      "options": ["wave", "hex", "diamond", "circle", "block"]
+    },
+    "animate": {
+      "type": "string",
+      "title": "Animation",
+      "description": "Scroll the wave bars and the brand gradient every 2 seconds",
+      "default": "on",
+      "options": ["on", "off"]
+    },
+    "usdToSgd": {
+      "type": "string",
+      "title": "USD to SGD rate",
+      "description": "Multiplier for the cost segment, as CHRYSAKI_USD_TO_SGD",
+      "default": "1.35"
+    }
+  }
+}
