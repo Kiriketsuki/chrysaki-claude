@@ -1,6 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
-import type { MockClock } from 'claude-code/testing'
+import type { Engine, MockClock } from 'claude-code/testing'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const RAN = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -80,4 +80,39 @@ test('yields to a survey', async ($, on) => {
   await $.session.measure(MEASURE)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: { ...props(160), hasSurvey: true } })
   expect(await ui.find({ type: 'Text', text: /5h/ })).toBeUndefined()
+})
+
+// The git key: a band Button that opens the git-pane mod's /git command.
+async function gitButtonTest($: Engine, on: On, commands: string[]): Promise<{ found: boolean; ran: string[] }> {
+  const clock = answerMeasure(on)
+  const ran: string[] = []
+  on('process.run', async (_$, e) => {
+    const cmd = e.argv.join(' ')
+    if (cmd.startsWith('git status')) return { value: { ...RAN, stdout: STATUS } }
+    return { value: { ...RAN, exitCode: 1, stdout: '' } }
+  })
+  on('env.set', async () => ({ value: undefined }))
+  on('fs.exists', async () => ({ value: false }))
+  on('settings.read', async () => ({ value: {} }))
+  on('command.list', async () => ({ value: commands.map(name => ({ name, description: name, source: 'plugin' as const })) }))
+  on('command.run', async (_$, e) => { ran.push(e.command); return { text: 'opened' } })
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/home/k/repo', surface: 'terminal', isInteractive: true })
+  await clock.advance(0)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(160) })
+  const button = await ui.find({ key: 'git-pane' })
+  if (button !== undefined) await ui.press({ key: 'git-pane' })
+  return { found: button !== undefined, ran }
+}
+
+test('draws the git key when /git exists and runs it on press', async ($, on) => {
+  const r = await gitButtonTest($, on, ['compact', 'git'])
+  expect(r.found).toBe(true)
+  expect(r.ran).toEqual(['git'])
+})
+
+test('draws no git key without the git-pane mod', async ($, on) => {
+  const r = await gitButtonTest($, on, ['compact'])
+  expect(r.found).toBe(false)
 })

@@ -2,7 +2,8 @@
 
 import type { ElementConstructor, Elements, RasterProps, RenderElement } from 'claude-code'
 
-import type { StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { CacheView, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import { cacheCard, toneColor } from './cache'
 import {
   barCells, ctxColor, ctxMarker, fiveHourColor, isHandoffDue, kilo, marker, modelLabel, rightEdge,
   sessionClock, costSgd, sevenDayColor, smartCwd, untilReset,
@@ -26,6 +27,22 @@ export type BandData = {
   barStyle: BarStyle
   usdToSgd: number
   onContext: () => void
+  cache: StatuslineCache | null
+  cacheView: CacheView | null
+  hasGitCommand: boolean
+  onGit: () => void
+}
+
+const HOURGLASS = '\u29d7'
+
+// The prompt cache segment: hourglass and time left, or "cold".
+function cacheSegment(T: Table, d: BandData): RenderElement | null {
+  const { Text } = T
+  if (d.cache === null || d.cacheView === null) return null
+  const color = toneColor(d.cacheView.tone)
+  return hoverGroup(T, 'cache', cacheCard(d.cache, d.cacheView), [
+    <Text color={color}>{`${HOURGLASS} ${d.cacheView.label}`}</Text>,
+  ])
 }
 
 // Below this width the band folds its four lines into two.
@@ -149,6 +166,7 @@ function contextLine(T: Table, R: ElementConstructor<RasterProps> | undefined, d
   const color = ctxColor(pct, u.ctxTokens)
   const tokens = u.ctxTokens === undefined ? '' : ` (${kilo(u.ctxTokens)}/${kilo(u.ctxWindow)})`
   const due = isHandoffDue(u.ctxTokens)
+  const cache = cacheSegment(T, d)
   return (
     <Box>
       {hoverGroup(T, 'ctx', `context ${pct}% · ${u.ctxTokens ?? '?'} of ${u.ctxWindow} tokens · handoff at 100k · press ctx for the breakdown`, [
@@ -170,7 +188,7 @@ function contextLine(T: Table, R: ElementConstructor<RasterProps> | undefined, d
 
 // Line 4: branch, ahead count, hash, line changes, file counts, worktree, PR and issues.
 function gitLine(T: Table, d: BandData): RenderElement | null {
-  const { Box, Text } = T
+  const { Box, Text, Button } = T
   const g = d.git
   if (g === null) return null
   const jewel = JEWELS[d.phase % JEWELS.length] ?? ROLE.emeraldLt
@@ -178,6 +196,8 @@ function gitLine(T: Table, d: BandData): RenderElement | null {
   const pr = r?.prNumber == null ? '' : `PR #${r.prNumber}${r.prTitle ? ': ' + (r.prTitle.length > 15 ? r.prTitle.slice(0, 15) + '…' : r.prTitle) : ''}`
   return (
     <Box>
+      {d.hasGitCommand ? <Button key="git-pane" label="git" hotkey="g" plain onPress={d.onGit} /> : <Text />}
+      {d.hasGitCommand ? <Text> </Text> : <Text />}
       {hoverGroup(T, 'branch', `${g.repoPath || 'no GitHub remote'} · ${g.branch} at ${g.hash} · ${g.ahead} unpushed`, [
         <Text color={jewel} bold>{`⎇ ${g.branch}`}</Text>,
         g.ahead > 0 ? <Text color={ROLE.blondeLt}>{`  ↑${g.ahead}`}</Text> : <Text />,
@@ -207,6 +227,7 @@ function compactLine(T: Table, d: BandData): RenderElement | null {
   if (u?.fiveHour) add(<Text color={fiveHourColor(u.fiveHour.percent)}>{`5h ${u.fiveHour.percent}%`}</Text>)
   if (u?.sevenDay) add(<Text color={sevenDayColor(u.sevenDay.percent)}>{`7d ${u.sevenDay.percent}%`}</Text>)
   if (u?.ctxPercent !== undefined) add(<Text color={ctxColor(u.ctxPercent, u.ctxTokens)}>{`ctx ${u.ctxPercent}%${isHandoffDue(u.ctxTokens) ? ' ⬢' : ''}`}</Text>)
+  if (d.cacheView) add(<Text color={toneColor(d.cacheView.tone)}>{`${HOURGLASS} ${d.cacheView.label}`}</Text>)
   if (g) add(<Text color={ROLE.emeraldLt}>{`⎇ ${g.branch} +${g.insertions} -${g.deletions}`}</Text>)
   return bits.length === 0 ? null : <Box>{bits}</Box>
 }

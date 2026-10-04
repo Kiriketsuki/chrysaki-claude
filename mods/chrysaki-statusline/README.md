@@ -13,6 +13,20 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 
 The engine sends rate limits, context and cost to the mod. Git, GitHub and vault data come from `git`, `gh` and the file system. The mod caches GitHub data for 5 minutes.
 
+## Prompt cache warning
+
+Claude Code caches the conversation prefix. The cache lives for 1 hour on a subscription within plan usage, and for 5 minutes on an API key, a cloud provider, or in overage. Each request resets the timer. When the cache expires, the next turn writes the whole prefix again at 1.25x (5m) or 2x (1h) the input price.
+
+The segment on the ctx line shows the time left. It is Emerald Lt while warm, Blonde inside the warning lead, and Error Lt when cold. The hover card shows the TTL, the expiry time, the tokens a cold turn writes, the hit ratio and the last miss cause.
+
+`statusline-command.sh` writes its stdin JSON to `${XDG_RUNTIME_DIR:-/tmp}/chrysaki-statusline/<session id>.json`. The mod reads `prompt_cache` from that file. Without the file, the mod times its own requests and infers the TTL from the environment and the rate limits.
+
+Once per warm period, inside the warning lead, the mod shows a toast and a desktop notification through `notify-send`. It warns only while no turn runs and only when a cold turn writes at least `cacheMinTokens` tokens. It sends one more notice when the cache goes cold.
+
+## Git key
+
+The git line carries a `g` key when the `git-pane` mod is loaded. Press `ctrl+x tab`, then `g`, to open the git pane.
+
 ## Fallback
 
 When the mod loads, it sets `CHRYSAKI_STATUSLINE_MOD=1` for the Claude Code process. Claude Code passes the variable to the `statusLine` command, and `statusline-command.sh` then prints nothing. Without the mod, the bash statusline works as before.
@@ -38,3 +52,6 @@ The mod also does not draw OSC 8 links.
 | `barStyle` | `wave` | Bar glyphs: `wave`, `hex`, `diamond`, `circle` or `block` |
 | `animate` | `on` | Scroll the bars and the gradient every 2 seconds |
 | `usdToSgd` | `1.35` | Multiplier for the cost segment |
+| `cacheWarnLead` | `auto` | Seconds before expiry to warn: `auto` (60 for 5m, 300 for 1h), `60`, `120`, `300` or `600` |
+| `cacheMinTokens` | `20000` | Warn only when a cold turn writes at least this many tokens |
+| `desktopNotify` | `on` | Send the warning to the desktop through `notify-send` |

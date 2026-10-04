@@ -46,6 +46,27 @@ export type StatuslineRemote = {
   fetchedAt: number
 }
 
+export type StatuslineCache = {
+  // statusline: read from the statusLine stdin JSON on disk. inferred: timed
+  // from the main thread's requests.
+  source: 'statusline' | 'inferred'
+  isWarm: boolean
+  ttl: '5m' | '1h'
+  // Epoch milliseconds. Absent when the cache holds nothing.
+  expiresAt?: number
+  hitRatio?: number
+  misses?: number
+  lastMissCause?: string
+  recacheTokens?: number
+}
+
+export type CacheTone = 'warm' | 'warning' | 'cold'
+
+export type CacheView = { label: string; tone: CacheTone }
+
+// The expiry times already warned for, so each period alerts once.
+export type CacheAlert = { warnedFor?: number; coldFor?: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'chrysaki-statusline': {
@@ -55,6 +76,10 @@ declare module 'claude-code' {
       remote: StatuslineRemote | null
       inbox: number
       phase: number
+      cache: StatuslineCache | null
+      cacheView: CacheView | null
+      cacheAlert: CacheAlert
+      hasGitCommand: boolean
     }
   }
 }

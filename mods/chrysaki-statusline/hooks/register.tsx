@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { CacheAlert, CacheView, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, parseStatuslineCache } from './cache'
+import type { AlertAction } from './cache'
 import { readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
 import type { Host } from './collect'
 import { drawBand } from './draw'
@@ -14,10 +16,18 @@ const git = atom({ plugin: 'chrysaki-statusline', key: 'git' } as const, null as
 const remote = atom({ plugin: 'chrysaki-statusline', key: 'remote' } as const, null as StatuslineRemote | null)
 const inbox = atom({ plugin: 'chrysaki-statusline', key: 'inbox' } as const, 0)
 const phase = atom({ plugin: 'chrysaki-statusline', key: 'phase' } as const, 0)
+const cache = atom({ plugin: 'chrysaki-statusline', key: 'cache' } as const, null as StatuslineCache | null)
+const shownCache = atom({ plugin: 'chrysaki-statusline', key: 'cacheView' } as const, null as CacheView | null)
+const cacheAlert = atom({ plugin: 'chrysaki-statusline', key: 'cacheAlert' } as const, {} as CacheAlert)
+const hasGitCommand = atom({ plugin: 'chrysaki-statusline', key: 'hasGitCommand' } as const, false)
 
 const ANIMATE_MS = 2000
 const REFRESH_MS = 60000
 const REMOTE_MAX_AGE_MS = 300000
+// The cache segment's clock. 15 seconds keeps idle wakeups rare.
+const CACHE_TICK_MS = 15000
+
+export type CacheConfig = { lead: string; minTokens: number; isDesktopNotify: boolean }
 
 // The engine surface the collectors in collect.ts use.
 function hostOf($: EngineInterface): Host {
@@ -91,6 +101,83 @@ async function refreshSlow($: EngineInterface, isRemoteForced: boolean): Promise
   }
 }
 
+// Source 1: the statusLine stdin JSON that statusline-command.sh writes for
+// this session. Null when the file is missing or holds no prompt_cache.
+async function readCacheFile($: EngineInterface): Promise<StatuslineCache | null> {
+  try {
+    const [id, runtime] = await Promise.all([$.session.id(), $.env.get('XDG_RUNTIME_DIR')])
+    const path = `${runtime ?? '/tmp'}/chrysaki-statusline/${id}.json`
+    if (!(await $.fs.exists(path))) return null
+    return parseStatuslineCache(await $.fs.read(path))
+  } catch {
+    return null
+  }
+}
+
+// Source 2: the TTL from the documented overrides, the settings and the plan.
+async function currentTtl($: EngineInterface): Promise<'5m' | '1h'> {
+  const [force5m, ttlEnv, enable1h, settings, u] = await Promise.all([
+    $.env.get('FORCE_PROMPT_CACHING_5M'),
+    $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'),
+    $.env.get('ENABLE_PROMPT_CACHING_1H'),
+    $.settings.read().catch(() => ({})),
+    read($, usage),
+  ])
+  const maxRateLimit = Math.max(u?.fiveHour?.percent ?? 0, u?.sevenDay?.percent ?? 0)
+  const ttlSetting = (settings as Record<string, unknown>).promptCacheTtl
+  return inferTtl({ force5m, ttlEnv, ttlSetting, enable1h, maxRateLimit })
+}
+
+async function sendAlert($: EngineInterface, action: AlertAction, config: CacheConfig): Promise<void> {
+  const k = `${Math.round(action.tokens / 1000)}k`
+  const title = action.kind === 'warn' ? `Prompt cache cools in ${action.minutes} min` : 'Prompt cache went cold'
+  const body = `Next turn re-writes ${k} tokens`
+  $.ui.toast(`${title}. ${body}.`, { timeoutMs: 8000 })
+  if (!config.isDesktopNotify) return
+  try {
+    await $.process.run(['notify-send', '-a', 'Claude Code', '-i', 'dialog-warning', title, body], { timeoutMs: 5000 })
+  } catch (error) {
+    logFailure($, error)
+  }
+}
+
+// Recomputes the segment. It writes state only when the shown value changes,
+// and it raises at most one alert per warm period.
+async function tickCache($: EngineInterface, config: CacheConfig, isTurnRunning: boolean): Promise<void> {
+  const fromFile = await readCacheFile($)
+  if (fromFile !== null) {
+    const prev = await read($, cache)
+    if (JSON.stringify(prev) !== JSON.stringify(fromFile)) await update($, cache, () => fromFile)
+  }
+  const c = await read($, cache)
+  const now = await $.clock.now()
+  const view = cacheView(c, now, c === null ? 0 : leadSeconds(config.lead, c.ttl))
+  const shown = await read($, shownCache)
+  if (JSON.stringify(shown) !== JSON.stringify(view)) await update($, shownCache, () => view)
+  if (c === null || view === null) return
+  const decision = nextAlert(await read($, cacheAlert), { cache: c, view, now, isTurnRunning, minTokens: config.minTokens })
+  if (decision.action === null) return
+  await update($, cacheAlert, () => decision.state)
+  await sendAlert($, decision.action, config)
+}
+
+async function refreshGitCommand($: EngineInterface): Promise<void> {
+  try {
+    const isThere = (await $.command.list()).some(c => c.name === 'git')
+    if (isThere !== (await read($, hasGitCommand))) await update($, hasGitCommand, () => isThere)
+  } catch (error) {
+    logFailure($, error)
+  }
+}
+
+async function openGitPane($: EngineInterface): Promise<void> {
+  try {
+    await $.command.run({ command: 'git' })
+  } catch (error) {
+    $.ui.toast(`The /git command failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 // The ctx button: the largest used categories, as /context lists them.
 async function toastBreakdown($: EngineInterface): Promise<void> {
   try {
@@ -113,6 +200,14 @@ export const register: Register = (on, options) => {
   // Set when the model pushes or calls gh. The next slow refresh then skips
   // the five-minute cache. A reload clears it, which costs one late update.
   let isRemoteDue = false
+  // True from a main-thread request until its turn completes. A reload during
+  // a turn clears it, which only allows one early alert.
+  let isTurnRunning = false
+  const cacheConfig: CacheConfig = {
+    lead: String(options.cacheWarnLead ?? 'auto'),
+    minTokens: Number(options.cacheMinTokens ?? '20000') || 20000,
+    isDesktopNotify: String(options.desktopNotify ?? 'on') === 'on',
+  }
 
   on('session.start', async ($, e, next) => {
     const done = await next(e)
@@ -122,8 +217,10 @@ export const register: Register = (on, options) => {
     $.clock.every(REFRESH_MS, () => {
       const isForced = isRemoteDue
       isRemoteDue = false
-      void refreshSlow($, isForced)
+      void refreshSlow($, isForced).then(() => refreshGitCommand($))
     })
+    $.clock.after(0, () => { void refreshGitCommand($).then(() => tickCache($, cacheConfig, isTurnRunning)) })
+    $.clock.every(CACHE_TICK_MS, () => { void tickCache($, cacheConfig, isTurnRunning) })
     if (isAnimated) $.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })
     return done
   })
@@ -134,9 +231,26 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // Source 2: each main-thread request renews the cache from its start.
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId !== undefined) return yield* next(e)
+    isTurnRunning = true
+    const startedAt = await $.clock.now()
+    const result = yield* next(e)
+    if (result.usage !== null && (await read($, cache))?.source !== 'statusline') {
+      const fresh = inferredCache(startedAt, await currentTtl($), result.usage)
+      await update($, cache, () => fresh)
+    }
+    return result
+  })
+
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
-    if (e.agentId === undefined) await refreshFast($)
+    if (e.agentId === undefined) {
+      isTurnRunning = false
+      await refreshFast($)
+      await tickCache($, cacheConfig, isTurnRunning)
+    }
     return done
   })
 
@@ -157,10 +271,13 @@ export const register: Register = (on, options) => {
       read($, usage), read($, identity), read($, git), read($, remote), read($, inbox),
       isAnimated ? read($, phase) : Promise.resolve(0), $.clock.now(), $.env.get('HOME'),
     ])
+    const [c, cv, hasGit] = await Promise.all([read($, cache), read($, shownCache), read($, hasGitCommand)])
     const band = drawBand(table, Raster, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       columns: e.props.bodyColumns, barStyle, usdToSgd,
       onContext: () => { void toastBreakdown($) },
+      cache: c, cacheView: cv, hasGitCommand: hasGit,
+      onGit: () => { void openGitPane($) },
     })
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band
