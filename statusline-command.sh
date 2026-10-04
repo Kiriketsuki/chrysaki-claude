@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
 
+input=$(cat)
+
+# --- relay for the mod ---
+# The plugin API does not expose the prompt_cache fields of this JSON. This
+# script writes the JSON to a runtime file for each session, and the
+# chrysaki-statusline mod reads prompt_cache from that file. The write goes
+# to a temporary file first, so the mod never reads half a file.
+_relay_dir="${XDG_RUNTIME_DIR:-/tmp}/chrysaki-statusline"
+_relay_sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
+if [ -n "$_relay_sid" ] && mkdir -p "$_relay_dir" 2>/dev/null; then
+  _relay_tmp=$(mktemp "$_relay_dir/.relay.XXXXXX" 2>/dev/null) &&
+    printf '%s' "$input" > "$_relay_tmp" &&
+    mv -f "$_relay_tmp" "$_relay_dir/$_relay_sid.json"
+fi
+
 # --- mod fallback ---
 # The chrysaki-statusline mod sets CHRYSAKI_STATUSLINE_MOD=1 when it loads, and
 # Claude Code passes the variable to this script. The mod then draws the
 # statusline above the prompt, so this script prints nothing. Without the mod,
 # this script is the statusline. Set CHRYSAKI_STATUSLINE_BOTH=1 to keep both.
 if [ "${CHRYSAKI_STATUSLINE_MOD:-}" = "1" ] && [ "${CHRYSAKI_STATUSLINE_BOTH:-}" != "1" ]; then
-  cat >/dev/null
   exit 0
 fi
 
@@ -45,7 +59,6 @@ hex_fg() {
   printf '\033[38;2;%d;%d;%dm' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"
 }
 
-input=$(cat)
 
 # --- model ---
 model_raw=$(echo "$input" | jq -r '.model.display_name // ""')
