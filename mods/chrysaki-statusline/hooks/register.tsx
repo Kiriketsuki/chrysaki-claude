@@ -103,15 +103,41 @@ async function refreshSlow($: EngineInterface, isRemoteForced: boolean): Promise
 
 // Source 1: the statusLine stdin JSON that statusline-command.sh writes for
 // this session. Null when the file is missing or holds no prompt_cache.
+// $.fs reads it first. When $.fs refuses, `cat` through the host reads it.
+// The first failure of a load goes to the transcript once, with its reason,
+// so a missing segment always has a visible cause.
+let hasReportedCacheRead = false
+
 async function readCacheFile($: EngineInterface): Promise<StatuslineCache | null> {
+  let path: string
   try {
     const [id, runtime] = await Promise.all([$.session.id(), $.env.get('XDG_RUNTIME_DIR')])
-    const path = `${runtime ?? '/tmp'}/chrysaki-statusline/${id}.json`
-    if (!(await $.fs.exists(path))) return null
-    return parseStatuslineCache(await $.fs.read(path))
-  } catch {
+    path = `${runtime ?? '/tmp'}/chrysaki-statusline/${id}.json`
+  } catch (error) {
+    logFailure($, error)
     return null
   }
+  let text: string | null = null
+  let reason = ''
+  try {
+    text = await $.fs.read(path)
+  } catch (error) {
+    reason = `fs.read: ${error instanceof Error ? error.message : String(error)}`
+    try {
+      const r = await $.process.run(['cat', path], { timeoutMs: 3000 })
+      if (r.exitCode === 0) text = r.stdout
+      else reason += `; cat exited ${r.exitCode}: ${r.stderr.trim()}`
+    } catch (catError) {
+      reason += `; cat: ${catError instanceof Error ? catError.message : String(catError)}`
+    }
+  }
+  const parsed = text === null ? null : parseStatuslineCache(text)
+  if (parsed === null && !hasReportedCacheRead) {
+    hasReportedCacheRead = true
+    const why = text === null ? reason : 'the file holds no prompt_cache'
+    $.ui.log(`chrysaki-statusline: cache segment has no data from ${path} (${why})`, { to: 'transcript' })
+  }
+  return parsed
 }
 
 // Source 2: the TTL from the documented overrides, the settings and the plan.

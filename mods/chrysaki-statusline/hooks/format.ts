@@ -67,11 +67,12 @@ const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
   block: ['█', '░'],
 }
 
-// progress_bar: eight cells, round(pct * 8 / 100) filled. The wave style
+// progress_bar: eight cells by default, round(pct * length / 100) filled. The
+// band stretches a bar to the width of its cell with `length`. The wave style
 // alternates up and down triangles and scrolls by `shift` (0 to 3).
-export function barCells(pct: number, style: BarStyle, shift: number): BarCell[] {
-  const filled = Math.max(0, Math.min(8, Math.floor((pct * 8 + 50) / 100)))
-  return Array.from({ length: 8 }, (_, i) => {
+export function barCells(pct: number, style: BarStyle, shift: number, length = 8): BarCell[] {
+  const filled = Math.max(0, Math.min(length, Math.floor((pct * length + 50) / 100)))
+  return Array.from({ length }, (_, i) => {
     const isFilled = i < filled
     if (style === 'wave') {
       const isUp = (i + shift) % 4 % 2 === 0
