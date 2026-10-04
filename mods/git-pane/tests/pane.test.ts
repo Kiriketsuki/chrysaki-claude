@@ -1,4 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import type { RenderElement } from 'claude-code'
+import { expect, mock, test } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
 
 const ROOT = '/home/k/repo'
 
@@ -114,4 +116,35 @@ test('discard asks for a second press', async ($, on) => {
   await ui.press({ key: 'opt-d' })
   expect(ran).toContain(`git -C ${ROOT} clean -f -- notes.md`)
   await ui.unmount()
+})
+
+const BAND = {
+  plugin: 'git-pane',
+  component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+} as const
+
+// Loads the git state through the pane, then mounts the band with an empty
+// band beneath it, as the engine draws when no other mod draws there.
+async function mountBand($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) {
+  on('process.run', async (_$, e) => ({ value: { ...OK, stdout: fakeGit(e.argv) } }))
+  on('ui.render', { component: 'AbovePrompt' }, async (b$, e) => h(b$.ui.resolve(e).Box, {}) as RenderElement)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'opt-r' })
+  await pane.unmount()
+  return $.ui.mount({ ...BAND, surface: 'terminal' })
+}
+
+test('the band draws a git line on its own', async ($, on) => {
+  mock.env(on, {})
+  const band = await mountBand($, on)
+  expect(await band.find({ key: 'git-open' })).toBeDefined()
+  await band.unmount()
+})
+
+test('the band stands down while the statusline mod is loaded', async ($, on) => {
+  mock.env(on, { CHRYSAKI_STATUSLINE_MOD: '1' })
+  const band = await mountBand($, on)
+  expect(await band.find({ key: 'git-open' })).toBeUndefined()
+  await band.unmount()
 })

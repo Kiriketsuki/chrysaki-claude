@@ -230,6 +230,9 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!showBand || e.props.hasSurvey) return next(e)
+    // The chrysaki-statusline mod already draws a git line with a g key that
+    // opens this pane. A second git line would repeat it.
+    if ((await $.env.get('CHRYSAKI_STATUSLINE_MOD')) === '1') return next(e)
     const below = await next(e)
     const ui = $.ui.resolve(e)
     const m = await model($, e.surface, e.props.bodyColumns)
