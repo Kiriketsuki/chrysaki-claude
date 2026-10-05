@@ -4,6 +4,8 @@ Mods are Claude Code plugins made of function hooks. They run inside the session
 
 | Mod | What it does |
 |:---|:---|
+| [`chrysaki-statusline`](chrysaki-statusline/) | Draws the Chrysaki statusline as a band above the prompt, with a prompt cache warning, handoff and resume keys, and rate limits that hold between sessions |
+| [`git-pane`](git-pane/) | Opens a lazygit style git pane with `/git` |
 | [`kilint-gate`](kilint-gate/) | Denies a `git commit` when kilint finds an STE error in the message |
 
 ## Install
@@ -14,7 +16,7 @@ Load one mod for one session:
 claude --plugin-dir ~/dev/Personal/chrysaki-claude/mods/kilint-gate
 ```
 
-Load mods in every session, the desktop app included, with `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`. Separate several folders with `:`.
+Load mods in every session, the desktop app included, with `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of `~/.claude/settings.json`. Separate several folders with `:`. Point it at a copy of the mods, not at this checkout. A branch switch in the checkout changes what every session loads.
 
 ```json
 {
