@@ -7,7 +7,7 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 - The band is one more ruled section of the prompt box. Its rules and column dividers take the engine's `promptBorder` theme colour, the colour of the prompt's own rules.
 - The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right.
 - Below the header, a grid of cells spans the full width: usage, context and git at 150 columns and up, two columns from 100. Under 100 columns the band folds to one line.
-- Each cell puts its label on the left and its figures in a table on the right. A dotted rule `┊` separates the figure columns, and dim `·` leaders fill the padding, so no column shows bare space. A bold solid rule separates the panels: Emerald Lt after usage, Teal Lt after context. The two git rows share one column grid.
+- Each cell puts its label on the left and its figures in a table on the right. A dotted rule `┊` separates the figure columns, and dim `·` leaders fill the padding, so no column shows bare space. A bold solid rule separates the panels: Emerald Lt after usage, Teal Lt after context. The usage panel has a top border that turns down into its divider, and the context panel has a bottom border that joins both dividers. A padding row parts each border from the figures. The two git rows share one column grid.
 - The context colour goes by tokens, not by percent: Teal under 250k, Blonde from 250k, Error from 500k. A 1M window and a 200k window warn at the same size.
 - Bars default to the static `line` style: `━` for the filled part, `─` in the rule colour for the rest.
 - Each segment shows a card with details on hover. The `ctx` control shows the context breakdown as a toast.
@@ -62,7 +62,7 @@ Claude Code draws 256 colours inside tmux unless `CLAUDE_CODE_TMUX_TRUECOLOR=1` 
 
 ## Hint drawer
 
-The engine draws the permission mode under the prompt. The hint text after it, such as `(shift+tab to cycle)`, is a drawer. Closed, it shows only a `▸` handle. Click the handle to open it. The mod keeps the choice in its plugin store.
+The engine draws the permission mode under the prompt. The hint text after it, such as `(shift+tab to cycle)`, is a drawer. The chevron left of the model badge opens and closes it. Closed, the hint draws nothing. The mode label and the `·` after it stay, because the engine draws them outside any mod hook. The mod keeps the choice in its plugin store.
 
 ## Git key
 

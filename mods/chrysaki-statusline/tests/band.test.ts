@@ -262,7 +262,7 @@ test('the git rows line up in shared columns with separators', async ($, on) => 
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
   const seps = await ui.findAll({ type: 'Text', text: ' ┊ ' })
   expect(seps.length).toBeGreaterThanOrEqual(6)
-  // No figure column pads with three or more bare spaces.
-  expect(await ui.find({ type: 'Text', text: /^ {3,}$/ })).toBeUndefined()
+  // Dotted leaders, not bare space, pad the figure columns.
+  expect(await ui.find({ type: 'Text', text: /·{2,}/ })).toBeDefined()
   await ui.unmount()
 })

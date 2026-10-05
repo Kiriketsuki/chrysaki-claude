@@ -56,6 +56,9 @@ export type BandData = {
   onDraftEmail: (text: string) => void
   onDraftProfile: (value: string) => void
   onSaveAccount: () => void
+  // The hint drawer under the prompt, and its chevron in the header.
+  isHintOpen: boolean
+  onToggleHint: () => void
 }
 
 // Below this width the band folds to the header and one line.
@@ -197,7 +200,7 @@ function truncate(text: string, width: number): string {
 // The header: brand segments, a rule in the prompt's colour, then the mirror
 // run with cost, session time and account.
 function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
-  const { Box, Text } = T
+  const { Box, Text, Button } = T
   const id = d.identity
   const u = d.usage
   const left: Seg[] = [
@@ -223,9 +226,13 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     ...(email && !isCompact ? [accountSeg] : []),
   ]
   const inbox = d.inbox > 0 ? `◇ inbox ${d.inbox} ` : ''
-  const room = Math.max(0, inner - segWidth(left) - segWidth(right) - inbox.length - 2)
+  // The chevron opens the hint drawer under the prompt. It takes one cell, and
+  // the brand segment brings its own leading space.
+  const chevron = 1
+  const room = Math.max(0, inner - chevron - segWidth(left) - segWidth(right) - inbox.length - 2)
   return (
     <Box key="header">
+      <Button key="hint-toggle" label={d.isHintOpen ? '▾' : '▸'} plain onPress={d.onToggleHint} />
       {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, left))}
       <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
       {inbox ? <Text color={ROLE.emeraldLt}>{inbox}</Text> : <Text />}
@@ -562,10 +569,39 @@ function gitRows(T: Table, d: BandData, width: number): [RenderElement, RenderEl
 // separators inside a panel. Inside the cache warning lead it warms to Blonde.
 const DIVIDER_COLORS = [ROLE.emeraldLt, ROLE.teal] as const
 
-function divider(T: Table, d: BandData, index: number): RenderElement {
+function dividerColor(d: BandData, index: number): string {
+  return d.cacheView?.tone === 'warning' ? ROLE.warn : DIVIDER_COLORS[index] ?? ROLE.emeraldLt
+}
+
+// A run of frame glyphs in the colour of divider `index`.
+function rule(T: Table, d: BandData, index: number, text: string): RenderElement {
   const { Text } = T
-  const color = d.cacheView?.tone === 'warning' ? ROLE.warn : DIVIDER_COLORS[index] ?? ROLE.emeraldLt
-  return <Text color={color} bold>│</Text>
+  return <Text color={dividerColor(d, index)} bold>{text}</Text>
+}
+
+function divider(T: Table, d: BandData, index: number): RenderElement {
+  return rule(T, d, index, '│')
+}
+
+// The frame above the usage panel: a top border that turns down into the
+// first divider, then one padding row.
+function usageTop(T: Table, d: BandData, usageWidth: number): RenderElement[] {
+  const { Box } = T
+  return [
+    <Box key="usage-top">{rule(T, d, 0, `${'─'.repeat(usageWidth)}┐`)}</Box>,
+    <Box key="usage-pad">{spaces(T, usageWidth)}{divider(T, d, 0)}</Box>,
+  ]
+}
+
+// The frame below the context panel: one padding row, then a bottom border
+// that joins the divider on each side. Without a second divider, as in the
+// medium layout, the border runs open to the right.
+function contextBottom(T: Table, d: BandData, usageWidth: number, contextWidth: number, isClosed: boolean): RenderElement[] {
+  const { Box, Text } = T
+  return [
+    <Box key="context-pad">{spaces(T, usageWidth)}{divider(T, d, 0)}{spaces(T, contextWidth)}{isClosed ? divider(T, d, 1) : <Text />}</Box>,
+    <Box key="context-bottom">{spaces(T, usageWidth)}{rule(T, d, 0, '└')}{rule(T, d, 1, `${'─'.repeat(contextWidth)}${isClosed ? '┘' : ''}`)}</Box>,
+  ]
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -583,7 +619,7 @@ function wideRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarC
   const widths = fits.map(f => columnNeed(f, barLength))
   const gitWidth = inner - 2 - widths.reduce((n, w) => n + w, 0)
   const [gitA, gitB] = gitRows(T, d, gitWidth)
-  return [0, 1].map(i => (
+  const rows = [0, 1].map(i => (
     <Box key={`row-${i}`}>
       {barCell(T, R, cols[0][i] as BarCell, fits[0], barLength, widths[0] ?? 0, d)}
       {divider(T, d, 0)}
@@ -592,6 +628,7 @@ function wideRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarC
       {i === 0 ? gitA : gitB}
     </Box>
   ))
+  return [...usageTop(T, d, widths[0] ?? 0), ...rows, ...contextBottom(T, d, widths[0] ?? 0, widths[1] ?? 0, true)]
 }
 
 // Medium: the usage and context panels over two rows, then git in two full-width rows.
@@ -609,7 +646,7 @@ function mediumRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [Ba
       {barCell(T, R, cols[1][i] as BarCell, fits[1], barLength, widths[1] ?? 0, d)}
     </Box>
   ))
-  return [...bars, gitA, gitB]
+  return [...usageTop(T, d, widths[0] ?? 0), ...bars, ...contextBottom(T, d, widths[0] ?? 0, widths[1] ?? 0, false), gitA, gitB]
 }
 
 // The folded form under NARROW_COLUMNS: one line of the key figures.
@@ -643,8 +680,8 @@ export function drawBand(T: Table, Raster: RasterEl, d: BandData): RenderElement
     [contextCell(T, d), cacheCell(T, d)],
   ]
   const rows = (d.columns >= WIDE_COLUMNS ? wideRows(T, Raster, d, inner, cols) : null) ?? mediumRows(T, Raster, d, inner, cols)
-  // One empty row parts the band from the transcript above it, and one more
-  // parts the header from the grid.
+  // One empty row parts the band from the transcript above it. The usage
+  // panel's top border parts the header from the grid.
   const menu = accountRows(T, d)
-  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...menu, <Box key="header-gap" height={1} />, ...rows]}</Box>
+  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...menu, ...rows]}</Box>
 }

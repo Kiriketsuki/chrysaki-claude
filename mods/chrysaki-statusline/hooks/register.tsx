@@ -641,16 +641,13 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // The hint text under the prompt as a drawer. The engine draws the mode
-  // label before it, outside this component. Closed, the drawer shows only its
-  // handle. Open, it shows the engine's own line, live pills and all.
+  // The hint text under the prompt as a drawer. The chevron left of the band
+  // header opens and closes it. Closed, the hint draws nothing. The engine
+  // draws the mode label before it, outside any mod hook, so that label stays.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    const isOpen = await read($, hintOpen)
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const handle = <Button key="hint-drawer" label={isOpen ? '▾' : '▸'} plain onPress={() => { void toggleHint($) }} />
-    if (!isOpen) return <Box>{handle}</Box>
-    const line = await next(e)
-    return <Box>{handle}<Text> </Text>{line ?? <Text dimColor>{e.props.hint}</Text>}</Box>
+    if (await read($, hintOpen)) return next(e)
+    const { Text } = $.ui.resolve(e)
+    return <Text />
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -665,7 +662,9 @@ export const register: Register = (on, options) => {
     const [c, cv, hasGit, busyHandoff, resumePath] = await Promise.all([
       read($, cache), read($, shownCache), read($, hasGitCommand), read($, handoff), read($, resume),
     ])
-    const [accountList, profileList, menu, pendingLogin] = await Promise.all([read($, accounts), read($, profiles), read($, accountMenu), read($, login)])
+    const [accountList, profileList, menu, pendingLogin, isHintOpen] = await Promise.all([
+      read($, accounts), read($, profiles), read($, accountMenu), read($, login), read($, hintOpen),
+    ])
     const band = drawBand(table, Raster, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       columns: e.props.bodyColumns, barStyle, usdToSgd,
@@ -687,6 +686,8 @@ export const register: Register = (on, options) => {
       onDraftEmail: text => { void setMenu($, m => ({ ...m, draftEmail: text })) },
       onDraftProfile: value => { void pickDraftProfile($, value) },
       onSaveAccount: () => { void saveDraft($) },
+      isHintOpen,
+      onToggleHint: () => { void toggleHint($) },
     })
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band
