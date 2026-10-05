@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
-import type { CacheAlert, CacheView, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { CacheAlert, CacheView, PendingHandoff, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, parseStatuslineCache } from './cache'
 import type { AlertAction } from './cache'
 import { readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
@@ -20,6 +20,15 @@ const cache = atom({ plugin: 'chrysaki-statusline', key: 'cache' } as const, nul
 const shownCache = atom({ plugin: 'chrysaki-statusline', key: 'cacheView' } as const, null as CacheView | null)
 const cacheAlert = atom({ plugin: 'chrysaki-statusline', key: 'cacheAlert' } as const, {} as CacheAlert)
 const hasGitCommand = atom({ plugin: 'chrysaki-statusline', key: 'hasGitCommand' } as const, false)
+const handoff = atom({ plugin: 'chrysaki-statusline', key: 'handoff' } as const, null as PendingHandoff | null)
+
+// The file name the context-handoff skill writes: YYYY-MM-DD-HHhMM-{slug}.md
+// under a handoffs directory. Overflow files do not match.
+export const HANDOFF_FILE = /\/handoffs\/\d{4}-\d{2}-\d{2}-\d{2}h\d{2}-[^/]+\.md$/
+
+// A pending handoff gives up after this many main-thread turns end with no
+// handoff file found.
+const HANDOFF_MAX_MISSES = 2
 
 const ANIMATE_MS = 2000
 const REFRESH_MS = 60000
@@ -204,6 +213,74 @@ async function openGitPane($: EngineInterface): Promise<void> {
   }
 }
 
+// The handoff button: runs /context-handoff. The tracking itself starts in
+// watchHandoff, when the command runs, so a handoff typed by hand gets its
+// path copied too. The pending state lives in $.state, so a hot reload
+// between the press and the turn keeps it.
+async function pressHandoff($: EngineInterface, surface: RenderSurface): Promise<void> {
+  if ((await read($, handoff)) !== null) return
+  await watchHandoff($, surface)
+  $.ui.toast('Writing the handoff. Its path goes to the clipboard when the turn ends.')
+  try {
+    await $.command.run({ command: 'context-handoff' })
+  } catch {
+    try {
+      await $.prompt.submit({ text: '/context-handoff', asUser: true })
+    } catch (error) {
+      await update($, handoff, () => null)
+      $.ui.toast(`The handoff did not start: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
+async function watchHandoff($: EngineInterface, surface: RenderSurface | null): Promise<void> {
+  const now = await $.clock.now()
+  const where = surface ?? (await $.session.surface().catch(() => null))
+  await update($, handoff, h => h ?? { since: now, surface: where, path: null, misses: 0 })
+}
+
+// The newest handoff file written since the press, in the project's and the
+// global handoffs directory. A fallback for a file no Write call named.
+async function newestHandoff($: EngineInterface, since: number): Promise<string | null> {
+  const [top, home, configDir] = await Promise.all([
+    $.process.run(['git', 'rev-parse', '--show-toplevel']).then(r => (r.exitCode === 0 ? r.stdout.trim() : '')).catch(() => ''),
+    $.env.get('HOME'),
+    $.env.get('CLAUDE_CONFIG_DIR'),
+  ])
+  const dirs = [top ? `${top}/.claude/handoffs` : '', `${configDir ?? `${home ?? ''}/.claude`}/handoffs`].filter(d => d !== '')
+  let best: { path: string; mtime: number } | null = null
+  for (const dir of dirs) {
+    const entries = await $.fs.list(dir).catch(() => [])
+    for (const entry of entries) {
+      const path = `${dir}/${entry.name}`
+      if (entry.kind !== 'file' || !HANDOFF_FILE.test(path)) continue
+      const stat = await $.fs.stat(path).catch(() => null)
+      if (stat !== null && stat.mtimeMs >= since - 5000 && (best === null || stat.mtimeMs > best.mtime)) best = { path, mtime: stat.mtimeMs }
+    }
+  }
+  return best?.path ?? null
+}
+
+// Runs as each main-thread turn ends. It copies the path once a handoff file
+// exists: the one a Write named, or the newest one written since the start.
+async function finishHandoff($: EngineInterface): Promise<void> {
+  const h = await read($, handoff)
+  if (h === null) return
+  const path = h.path ?? (await newestHandoff($, h.since))
+  if (path === null) {
+    if (h.misses + 1 < HANDOFF_MAX_MISSES) {
+      await update($, handoff, p => (p === null ? null : { ...p, misses: p.misses + 1 }))
+      return
+    }
+    await update($, handoff, () => null)
+    $.ui.toast('The handoff ended, but no handoff file was found to copy.')
+    return
+  }
+  await update($, handoff, () => null)
+  const copied = await $.ui.copy(h.surface === null ? { text: path } : { text: path, surface: h.surface })
+  $.ui.toast(copied.isCopied ? `Copied the handoff path: ${path}` : `The handoff is at ${path}. Copy is not available here.`, { timeoutMs: 10000 })
+}
+
 // The ctx button: the largest used categories, as /context lists them.
 async function toastBreakdown($: EngineInterface): Promise<void> {
   try {
@@ -274,6 +351,7 @@ export const register: Register = (on, options) => {
     const done = await next(e)
     if (e.agentId === undefined) {
       isTurnRunning = false
+      await finishHandoff($)
       await refreshFast($)
       await tickCache($, cacheConfig, isTurnRunning)
     }
@@ -281,6 +359,27 @@ export const register: Register = (on, options) => {
   })
 
   // A git command from the model moves the branch line at once.
+  // /context-handoff, typed or pressed, starts the watch for its file.
+  on('command.run', { command: 'context-handoff' }, async ($, e, next) => {
+    await watchHandoff($, null)
+    return next(e)
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    if (/^\s*\/context-handoff\b/.test(e.text)) await watchHandoff($, null)
+    return next(e)
+  })
+
+  // The handoff skill writes its file with Write. The path is the one to copy.
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const ran = await next(e)
+    if (ran.deny === undefined && ran.isError !== true && HANDOFF_FILE.test(e.file_path)) {
+      const path = e.file_path
+      if ((await read($, handoff)) !== null) await update($, handoff, p => (p === null ? null : { ...p, path }))
+    }
+    return ran
+  })
+
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     if (/\bgit\b/.test(e.command)) await refreshFast($)
@@ -297,13 +396,15 @@ export const register: Register = (on, options) => {
       read($, usage), read($, identity), read($, git), read($, remote), read($, inbox),
       isAnimated ? read($, phase) : Promise.resolve(0), $.clock.now(), $.env.get('HOME'),
     ])
-    const [c, cv, hasGit] = await Promise.all([read($, cache), read($, shownCache), read($, hasGitCommand)])
+    const [c, cv, hasGit, busyHandoff] = await Promise.all([read($, cache), read($, shownCache), read($, hasGitCommand), read($, handoff)])
     const band = drawBand(table, Raster, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       columns: e.props.bodyColumns, barStyle, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
       onGit: () => { void openGitPane($) },
+      isHandingOff: busyHandoff !== null,
+      onHandoff: () => { void pressHandoff($, e.surface) },
     })
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band

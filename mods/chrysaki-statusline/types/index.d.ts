@@ -29,13 +29,30 @@ export type StatuslineGit = {
   branch: string
   hash: string
   ahead: number
+  behind: number
   staged: number
   unstaged: number
+  untracked: number
+  // The upstream branch, for example origin/main, or empty without one.
+  upstream: string
+  // The subject and relative age of the commit at HEAD.
+  subject: string
+  age: string
   insertions: number
   deletions: number
   worktree: string
   // owner/repo from the origin remote, or empty when it is not on GitHub.
   repoPath: string
+}
+
+// A /context-handoff run the mod watches, to copy the file path it writes.
+export type PendingHandoff = {
+  since: number
+  // Where the copy goes: the surface of the press, or the session's surface.
+  surface: 'terminal' | 'desktop' | 'mobile' | 'vscode' | null
+  path: string | null
+  // Main-thread turns that ended with no handoff file found.
+  misses: number
 }
 
 export type StatuslineRemote = {
@@ -80,6 +97,7 @@ declare module 'claude-code' {
       cacheView: CacheView | null
       cacheAlert: CacheAlert
       hasGitCommand: boolean
+      handoff: PendingHandoff | null
     }
   }
 }

@@ -65,7 +65,9 @@ describe('formats', () => {
       '1 M. N... 100644 100644 100644 a b hooks/a.ts', '1 .M N... 100644 100644 100644 a b hooks/b.ts',
       '1 MM N... 100644 100644 100644 a b hooks/c.ts', '? new.txt',
     ].join('\n')
-    expect(parseStatus(status)).toEqual({ branch: 'main', hash: '9f25299', ahead: 2, staged: 2, unstaged: 2 })
+    expect(parseStatus(status)).toEqual({
+      branch: 'main', hash: '9f25299', ahead: 2, behind: 0, staged: 2, unstaged: 2, untracked: 1, upstream: 'origin/main',
+    })
     expect(inboxDepth('# Scratch\n## Ramblings\n- a\n- b\n## Done\n- c')).toBe(2)
   })
 

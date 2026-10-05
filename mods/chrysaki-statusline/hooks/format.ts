@@ -115,8 +115,9 @@ export function sessionClock(ms: number): string {
   const h = Math.floor(secs / 3600)
   const m = Math.floor((secs % 3600) / 60)
   const s = secs % 60
-  if (h > 0) return `${h}hr ${m}m ${s}s`
-  if (m > 0) return `${m}m ${s}s`
+  // Seconds only matter in the first hour. Past it they are noise.
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`
   return `${s}s`
 }
 
@@ -154,4 +155,14 @@ export function inboxDepth(scratch: string): number {
 export function rightEdge(i: number, n: number): string {
   if (i === n - 1) return ''
   return i % 2 === 0 ? '' : ''
+}
+
+// The mirror of rightEdge, for a run that reads right to left: the glyph
+// before segment j of n. It reflects the left run's edge for the segment in
+// the mirrored place, so the right end of the header mirrors its left end.
+const MIRROR: Record<string, string> = { '\ue0b0': '\ue0b2', '\ue0bc': '\ue0be', '\ue0b8': '\ue0ba' }
+
+export function leftEdge(j: number, n: number): string {
+  const edge = rightEdge(n - 1 - j, n)
+  return MIRROR[edge] ?? edge
 }

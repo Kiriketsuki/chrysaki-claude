@@ -116,3 +116,79 @@ test('draws no git key without the git-pane mod', async ($, on) => {
   const r = await gitButtonTest($, on, ['compact'])
   expect(r.found).toBe(false)
 })
+
+test('every bar in the band has one length, wide and medium', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  for (const columns of [200, 120]) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
+    // A line-style bar is one uncoloured Text of rule glyphs. Its filled and
+    // empty runs are coloured Texts nested in it.
+    const bars = (await ui.findAll({ type: 'Text', text: /^[━─]{3,}$/ })).filter(b => b.props.color === undefined)
+    expect(bars.length).toBeGreaterThanOrEqual(3)
+    expect(new Set(bars.map(b => b.text.length)).size).toBe(1)
+    await ui.unmount()
+  }
+})
+
+test('the header mirrors the brand run on the right', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
+  // The left run ends on the right-pointing E0B0. The mirror run starts on E0B2.
+  expect(await ui.find({ type: 'Text', text: '' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: / \$2\.70 / })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the handoff key runs /context-handoff and copies the written path', async ($, on) => {
+  answerMeasure(on)
+  const ran: string[] = []
+  on('command.run', async (_$, e) => {
+    ran.push(e.command)
+    return {}
+  })
+  const copied: string[] = []
+  on('ui.copy', async (_$, e) => {
+    copied.push(e.text)
+    return { value: { isCopied: true as const } }
+  })
+  on('tool.call', { tool: 'Write' }, async () => ({ result: {}, text: 'ok' }))
+  // The engine ends the turn. Here the test stands in for it, and for git.
+  on('turn.complete', async () => ({ text: '' }))
+  on('process.run', async () => ({ value: { ...RAN, exitCode: 1, stdout: '' } }))
+  await $.session.measure(MEASURE)
+
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
+  await ui.press({ key: 'handoff' })
+  expect(ran).toEqual(['context-handoff'])
+
+  const path = '/home/k/repo/.claude/handoffs/2026-10-05-08h50-band-layout.md'
+  await $.tool.call({ tool: 'Write', file_path: path, content: '# Handoff' })
+  await $.turn.complete({ turnId: 't1', reason: 'end_turn', answer: '', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } as never)
+  expect(copied).toEqual([path])
+  await ui.unmount()
+})
+
+test('a /context-handoff typed by hand also gets its path copied', async ($, on) => {
+  answerMeasure(on)
+  const copied: string[] = []
+  on('ui.copy', async (_$, e) => {
+    copied.push(e.text)
+    return { value: { isCopied: true as const } }
+  })
+  on('command.run', async () => ({}))
+  on('tool.call', { tool: 'Write' }, async () => ({ result: {}, text: 'ok' }))
+  on('turn.complete', async () => ({ text: '' }))
+  on('process.run', async () => ({ value: { ...RAN, exitCode: 1, stdout: '' } }))
+  await $.session.measure(MEASURE)
+
+  await $.command.run({ command: 'context-handoff', args: '' } as never)
+  const path = '/home/k/.claude/handoffs/2026-10-05-09h01-typed.md'
+  // An overflow file in the same folder is not the handoff.
+  await $.tool.call({ tool: 'Write', file_path: '/home/k/.claude/handoffs/overflow-typed.md', content: 'x' })
+  await $.tool.call({ tool: 'Write', file_path: path, content: '# Handoff' })
+  await $.turn.complete({ turnId: 't2', reason: 'end_turn', answer: '', usage: null } as never)
+  expect(copied).toEqual([path])
+})
