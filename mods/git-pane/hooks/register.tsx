@@ -37,7 +37,10 @@ async function refresh($: EngineInterface, isFull: boolean): Promise<void> {
 
 async function openPane($: EngineInterface): Promise<void> {
   isPaneOpen = true
-  await $.ui.open({ id: PANE, title: 'git', focus: true, closeOnEscape: true })
+  const placed = await $.ui.open({ id: PANE, title: 'git', focus: true, closeOnEscape: true })
+  // A pane can open undrawn, for example on a narrow terminal. Say why, so
+  // that /git never does nothing in silence.
+  if (!placed.isPlaced) $.ui.toast(`The git pane is open but not drawn: ${placed.reason}`)
   await refresh($, true)
 }
 
