@@ -535,7 +535,7 @@ export function drawBand(T: Table, Raster: RasterEl, d: BandData): RenderElement
   const inner = Math.max(20, d.columns - RESERVE)
   if (d.columns < NARROW_COLUMNS) {
     const lines = [header(T, d, inner, true), compactLine(T, d)]
-    return <Box flexDirection="column">{lines.filter((l): l is RenderElement => l !== null)}</Box>
+    return <Box flexDirection="column" marginTop={1}>{lines.filter((l): l is RenderElement => l !== null)}</Box>
   }
   const u = d.usage
   const cols: [BarCell[], BarCell[]] = [
@@ -543,6 +543,7 @@ export function drawBand(T: Table, Raster: RasterEl, d: BandData): RenderElement
     [contextCell(T, d), cacheCell(T, d)],
   ]
   const rows = (d.columns >= WIDE_COLUMNS ? wideRows(T, Raster, d, inner, cols) : null) ?? mediumRows(T, Raster, d, inner, cols)
-  // One empty row parts the header from the grid.
-  return <Box flexDirection="column">{[header(T, d, inner, false), <Box key="header-gap" height={1} />, ...rows]}</Box>
+  // One empty row parts the band from the transcript above it, and one more
+  // parts the header from the grid.
+  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), <Box key="header-gap" height={1} />, ...rows]}</Box>
 }
