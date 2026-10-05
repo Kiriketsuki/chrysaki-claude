@@ -52,14 +52,16 @@ test('draws the four lines with the bash thresholds on every surface', async ($,
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(160) })
-    const five = await ui.find({ type: 'Text', text: /5h/ })
-    expect(five?.props.color).toBe('#b53f4a')
-    const seven = await ui.find({ type: 'Text', text: /7d/ })
-    expect(seven?.props.color).toBe('#a0a4b8')
+    // A percent takes the colour of the bar zone it reached: 80% sits in the
+    // Blonde Lt zone, 20% stays in the first zone and keeps the text colour.
+    const five = await ui.find({ type: 'Text', text: /^ ?80%$/ })
+    expect(five?.props.color).toBe('#fcc96a')
+    const seven = await ui.find({ type: 'Text', text: /^ ?20%$/ })
+    expect(seven?.props.color).toBe('#e0e2ea')
     expect(await ui.find({ type: 'Text', text: /handoff/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /\$2\.70/ })).toBeDefined()
     expect(await ui.find({ key: 'ctx-detail' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /\u2387 main/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^main$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^\+10$/ })).toBeDefined()
     // Both shortstat calls answer 5 insertions, so the total is 10.
     // The band composes: the band beneath still draws below the statusline.
@@ -249,7 +251,7 @@ test('the resume key never writes over a draft', async ($, on) => {
   expect(r.filled).toEqual([])
 })
 
-test('the git rows line up in shared columns with separators', async ($, on) => {
+test('the ledger opens each row with a jewel badge and draws no rule', async ($, on) => {
   answerMeasure(on)
   on('process.run', async (_$, e) => {
     const cmd = e.argv.join(' ')
@@ -259,10 +261,14 @@ test('the git rows line up in shared columns with separators', async ($, on) => 
   on('tool.call', { tool: 'Bash' }, async () => ({ result: { stdout: '', stderr: '', interrupted: false }, text: 'ok' }))
   await $.session.measure(MEASURE)
   await $.tool.call({ tool: 'Bash', command: 'git status' })
-  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
-  const seps = await ui.findAll({ type: 'Text', text: ' ┊ ' })
-  expect(seps.length).toBeGreaterThanOrEqual(6)
-  // Dotted leaders, not bare space, pad the figure columns.
-  expect(await ui.find({ type: 'Text', text: /·{2,}/ })).toBeDefined()
-  await ui.unmount()
+  for (const columns of [238, 160]) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
+    // Emerald for usage, Amethyst for the cache, Teal for the diff.
+    expect((await ui.find({ type: 'Text', text: /▰ 5h|▱ 5h|◆ 5h/ }))?.props.backgroundColor).toBe('#14664e')
+    expect((await ui.find({ type: 'Text', text: /⧗ cache/ }))?.props.backgroundColor).toBe('#3a2068')
+    expect((await ui.find({ type: 'Text', text: /± diff/ }))?.props.backgroundColor).toBe('#197278')
+    // No dotted, dashed or box rule anywhere in the ledger.
+    expect(await ui.find({ type: 'Text', text: /[┊│┐└┘]/ })).toBeUndefined()
+    await ui.unmount()
+  }
 })

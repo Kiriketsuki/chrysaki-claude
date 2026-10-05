@@ -1,25 +1,23 @@
 // Builds the band's tree from the collected values. No I/O happens here.
 //
-// The band is one more ruled section of the prompt box. Its rules and column
-// dividers take the theme colour of the prompt's own rules (`promptBorder`).
-// The header rule carries the brand segments on the left and their mirror on
-// the right. Below it, a grid of cells spans the full width.
+// The band is the Jewel Ledger. A header rule in the prompt's colour carries
+// the brand run on the left and its mirror on the right. A drawer slot under
+// it holds the account dropdown. The ledger below sets every figure on one
+// grid, and a jewel badge opens each row. See ledger.tsx.
 
-import type { ElementConstructor, Elements, RasterProps, RenderElement } from 'claude-code'
+import type { RenderElement } from 'claude-code'
 
 import type { AccountMenu, CacheView, FirefoxProfile, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
 import { NEW_PROFILE, accountLabel } from './accounts'
-import { cacheCard, toneColor } from './cache'
-import {
-  barCells, costSgd, ctxColor, ctxMarker, fiveHourColor, isHandoffDue, kilo, leftEdge, marker, modelLabel,
-  rightEdge, sessionClock, sevenDayColor, smartCwd, untilReset,
-} from './format'
+import { toneColor } from './cache'
+import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
 import type { BarStyle } from './format'
-import { CORE, JEWELS, ROLE } from './palette'
-import { barRaster } from './raster'
+import { ledgerRows } from './ledger'
+import { CORE, ROLE } from './palette'
+import { hoverGroup, spaces } from './prims'
+import type { Table } from './prims'
 
-export type Table = Elements[keyof Elements]
-type RasterEl = ElementConstructor<RasterProps> | undefined
+export type { Table } from './prims'
 
 export type BandData = {
   usage: StatuslineUsage | null
@@ -63,48 +61,48 @@ export type BandData = {
 
 // Below this width the band folds to the header and one line.
 export const NARROW_COLUMNS = 100
-// At this width and above, git gets a third column. Below it, git takes
-// full-width rows under the two bar columns.
-export const WIDE_COLUMNS = 150
+// At this width and up, an empty drawer slot parts the header from the ledger.
+const SPACER_COLUMNS = 150
 // The engine draws its collapse mark `[-]` over the last cells of the band's
-// first row. That row is the blank top margin, so no row of content needs to
-// stop short of the mark.
+// first row. That row is the blank top margin, so the header runs full width.
 const RESERVE = 0
 const RULE = '─'
 // The theme key of the prompt's rules. Text colours take a theme key.
 const RULE_COLOR = 'promptBorder'
 const HOURGLASS = '⧗'
-// The separator between two figure columns, as wide as GAP. A dotted rule
-// stays quieter than the solid cell divider.
-const SEP = ' ┊ '
-const GAP = SEP.length
-// The leader that fills a slot's padding, so a table never shows bare space.
-const LEADER = '·'
-const BAR_MIN = 12
-const BAR_MAX = 40
-const GIT_MIN = 60
 
-// --- Primitives ----------------------------------------------------------------
+// --- Segments ------------------------------------------------------------------
 
-// A header segment. `text` gives the width. A segment with `press` draws its
-// label as a plain Button on the segment's ground.
+// A header segment. `text` gives the width. `iconFg` colours the glyph before
+// the first space. A segment with `press` draws its label as a plain Button on
+// the segment's ground.
 type Seg = {
   text: string
   bg: string
   fg: string
   bold?: boolean
+  iconFg?: string
   press?: { key: string; label: string; hotkey: string; onPress: () => void }
 }
 
 function segBody(T: Table, s: Seg): RenderElement {
   const { Box, Text, Button } = T
-  if (s.press === undefined) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
+  if (s.press !== undefined) {
+    return (
+      <Box key={`seg-${s.press.key}`} backgroundColor={s.bg}>
+        <Text backgroundColor={s.bg}> </Text>
+        <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
+        <Text backgroundColor={s.bg}> </Text>
+      </Box>
+    )
+  }
+  const at = s.text.indexOf(' ')
+  if (s.iconFg === undefined || at < 0) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
   return (
-    <Box key={`seg-${s.press.key}`} backgroundColor={s.bg}>
-      <Text backgroundColor={s.bg}> </Text>
-      <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
-      <Text backgroundColor={s.bg}> </Text>
-    </Box>
+    <Text backgroundColor={s.bg}>
+      <Text backgroundColor={s.bg} color={s.iconFg} bold>{` ${s.text.slice(0, at)}`}</Text>
+      <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{`${s.text.slice(at)} `}</Text>
+    </Text>
   )
 }
 
@@ -140,75 +138,27 @@ function mirrored(T: Table, segs: readonly Seg[]): RenderElement[] {
   })
 }
 
-// A group that shows a card one row above it while hovered.
-function hoverGroup(T: Table, key: string, card: string, children: RenderElement[]): RenderElement {
-  const { Box, Text } = T
-  return (
-    <Box key={key}>
-      {children}
-      <Box position="absolute" top={-1} left={0} display="none" hover={{ display: 'flex' }} backgroundColor={CORE.elevated} paddingX={1}>
-        <Text color={ROLE.text}>{card}</Text>
-      </Box>
-    </Box>
-  )
-}
-
-function spaces(T: Table, n: number): RenderElement {
-  const { Text } = T
-  return <Text>{' '.repeat(Math.max(0, n))}</Text>
-}
-
-// A run of leader dots in the rule colour. One space keeps the dots off the
-// figure, on the side the figure is: `before` a right-aligned figure, `after`
-// a left-aligned one. The separator beside it brings its own space.
-function leader(T: Table, n: number, d: BandData, side: 'before' | 'after' | 'both' = 'after'): RenderElement {
-  const { Text } = T
-  const ends = side === 'both' ? 2 : 1
-  if (n <= ends) return spaces(T, n)
-  const dots = LEADER.repeat(n - ends)
-  return <Text color={frameColor(d)}>{side === 'after' ? ` ${dots}` : side === 'before' ? `${dots} ` : ` ${dots} `}</Text>
-}
-
-function sep(T: Table, d: BandData): RenderElement {
-  const { Text } = T
-  return <Text color={frameColor(d)}>{SEP}</Text>
-}
-
-function bar(T: Table, R: RasterEl, key: string, pct: number, color: string, d: BandData, length: number): RenderElement {
-  const cells = barCells(pct, d.barStyle, d.phase % 4, length)
-  const isLine = d.barStyle === 'line'
-  if (R !== undefined && !isLine) return <R key={key} columns={length} rows={1} cells={barRaster(cells, color, ROLE.hexEmpty)} />
-  const { Text } = T
-  const on = cells.filter(c => c.isFilled).map(c => c.glyph).join('')
-  const off = cells.filter(c => !c.isFilled).map(c => c.glyph).join('')
-  return <Text><Text color={color}>{on}</Text><Text color={isLine ? RULE_COLOR : ROLE.hexEmpty}>{off}</Text></Text>
-}
-
 function frameColor(d: BandData): string {
-  // The rules warm to Blonde inside the cache warning lead, so the alert also
-  // shows in the shape of the band.
+  // The header rule warms to Blonde inside the cache warning lead, so the
+  // alert also shows in the shape of the band.
   return d.cacheView?.tone === 'warning' ? ROLE.warn : RULE_COLOR
-}
-
-function truncate(text: string, width: number): string {
-  if (width <= 0) return ''
-  return text.length <= width ? text : text.slice(0, Math.max(0, width - 1)) + '…'
 }
 
 // --- Header --------------------------------------------------------------------
 
-// The header: brand segments, a rule in the prompt's colour, then the mirror
-// run with cost, session time and account.
+// The header: the drawer chevron, the brand run (model on Emerald, version on
+// Teal, folder on Royal Blue), a rule in the prompt's colour, then the mirror
+// run with cost on Royal Blue, the session clock on Teal, the inbox on Blonde
+// and the account on Emerald, or Topaz for a work account.
 function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
   const { Box, Text, Button } = T
   const id = d.identity
   const u = d.usage
   const left: Seg[] = [
-    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true },
-    ...(id?.version && !isCompact ? [{ text: `v${id.version}`, bg: CORE.blueLight, fg: ROLE.text }] : []),
-    { text: smartCwd(id?.cwd ?? '', d.home), bg: CORE.amethystLight, fg: ROLE.text, bold: true },
+    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt },
+    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.teal, fg: ROLE.text }] : []),
+    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.blue, fg: ROLE.text, bold: true }] : []),
   ]
-  // The mirror of the left run: Amethyst, Royal Blue, then Emerald at the edge.
   const email = id?.email ?? ''
   // The account list knows the work accounts. The config folder is the guess
   // for an email it does not list.
@@ -221,21 +171,20 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     press: { key: 'account', label: email, hotkey: 'a', onPress: d.onAccounts },
   }
   const right: Seg[] = [
-    ...(u?.costUsd === undefined ? [] : [{ text: `$${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true }]),
-    ...(u?.startedAt === undefined ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text }]),
+    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.blue, fg: ROLE.blondeLt, bold: true }]),
+    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.teal, fg: ROLE.text }]),
+    ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
-  const inbox = d.inbox > 0 ? `◇ inbox ${d.inbox} ` : ''
   // The chevron opens the hint drawer under the prompt. It takes one cell, and
   // the brand segment brings its own leading space.
   const chevron = 1
-  const room = Math.max(0, inner - chevron - segWidth(left) - segWidth(right) - inbox.length - 2)
+  const room = Math.max(0, inner - chevron - segWidth(left) - segWidth(right) - 2)
   return (
     <Box key="header">
       <Button key="hint-toggle" label={d.isHintOpen ? '▾' : '▸'} plain onPress={d.onToggleHint} />
       {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, left))}
       <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
-      {inbox ? <Text color={ROLE.emeraldLt}>{inbox}</Text> : <Text />}
       {right.length > 0
         ? hoverGroup(T, 'cost', u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`, mirrored(T, right))
         : <Text />}
@@ -293,362 +242,6 @@ function accountRows(T: Table, d: BandData): RenderElement[] {
   ]
 }
 
-// --- Bar cells -----------------------------------------------------------------
-
-// One figure in a cell's right-hand table. Slots line up down a column:
-// each slot index takes the width of its widest entry.
-type Slot = {
-  text: string
-  color: string
-  bold?: boolean
-  isRight?: boolean
-  // A pressable slot: a coloured glyph, then a plain Button. `text` holds the
-  // whole drawn width, glyph and hotkey included, for the column measure.
-  press?: { key: string; glyph: string; label: string; hotkey: string; onPress: () => void }
-  // Drawn in place of `text`, which still gives the width.
-  node?: RenderElement[]
-}
-
-// One slot at width `w`: the figure and a leader over the rest. An empty
-// slot is all leader.
-function slotEls(T: Table, s: Slot | undefined, w: number, d: BandData): RenderElement[] {
-  const { Text, Button } = T
-  if (s === undefined || s.text === '') return [leader(T, w, d)]
-  const pad = leader(T, w - s.text.length, d, s.isRight ? 'before' : 'after')
-  if (s.press !== undefined) {
-    return [
-      <Text color={s.color} bold={s.bold}>{s.press.glyph}</Text>,
-      <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />,
-      pad,
-    ]
-  }
-  const body = s.node ?? [<Text color={s.color} bold={s.bold}>{s.text}</Text>]
-  return s.isRight ? [pad, ...body] : [...body, pad]
-}
-
-// A row of slots at the column widths, joined by separators.
-function slotRow(T: Table, slots: readonly Slot[], widths: readonly number[], d: BandData): RenderElement[] {
-  return widths.flatMap((w, i) => [...(i > 0 ? [sep(T, d)] : []), ...slotEls(T, slots[i], w, d)])
-}
-
-type BarCell = {
-  key: string
-  label: RenderElement[]
-  labelWidth: number
-  bar: { key: string; pct: number; color: string } | null
-  slots: Slot[]
-}
-
-function windowCell(T: Table, label: string, w: { percent: number; resetsAt?: number } | undefined, color: (p: number) => string, d: BandData): BarCell {
-  const { Text } = T
-  const head = `${marker(w?.percent ?? 0, 50, 75)} ${label.padEnd(3)}`
-  if (w === undefined) return { key: label, label: [<Text color={ROLE.muted}>{head}</Text>], labelWidth: head.length, bar: null, slots: [] }
-  const c = color(w.percent)
-  const reset = untilReset(w.resetsAt, d.now)
-  const when = w.resetsAt === undefined ? 'reset time unknown' : `resets ${new Date(w.resetsAt).toISOString().slice(11, 16)} UTC, in ${reset}`
-  return {
-    key: label,
-    label: [hoverGroup(T, `win-${label}`, `${label} window · ${w.percent}% used · ${when}`, [<Text color={c}>{head}</Text>])],
-    labelWidth: head.length,
-    bar: { key: `bar-${label}`, pct: w.percent, color: c },
-    slots: [
-      { text: `${w.percent}%`, color: c, isRight: true },
-      { text: reset === '' ? '' : `↻ ${reset}`, color: ROLE.muted },
-    ],
-  }
-}
-
-function contextCell(T: Table, d: BandData): BarCell {
-  const { Text, Button } = T
-  const u = d.usage
-  if (u?.ctxPercent === undefined) {
-    return { key: 'ctx', label: [<Text color={ROLE.muted}>{'▰ ctx  '}</Text>], labelWidth: 7, bar: null, slots: resumeSlots(d) }
-  }
-  const pct = u.ctxPercent
-  const color = ctxColor(pct, u.ctxTokens)
-  return {
-    key: 'ctx',
-    label: [hoverGroup(T, 'ctx', `context ${pct}% · ${u.ctxTokens ?? '?'} of ${u.ctxWindow} tokens · handoff at 100k · press ctx for the breakdown`, [
-      <Text color={color}>{`${ctxMarker(pct, u.ctxTokens)} `}</Text>,
-      <Button key="ctx-detail" label="ctx" plain onPress={d.onContext} />,
-    ])],
-    labelWidth: 5,
-    bar: { key: 'bar-ctx', pct, color },
-    slots: [
-      { text: `${pct}%`, color, isRight: true },
-      { text: u.ctxTokens === undefined ? '' : `${kilo(u.ctxTokens)} / ${kilo(u.ctxWindow)}`, color: ROLE.muted },
-      handoffSlot(u.ctxTokens, d),
-    ],
-  }
-}
-
-// The handoff slot. Past the handoff threshold it is a button: h, or a
-// click, sends /context-handoff and copies the handoff path when it is done.
-function handoffSlot(tokens: number | undefined, d: BandData): Slot {
-  if (d.isHandingOff) return { text: '◐ handing off', color: ROLE.warn, bold: true }
-  if (!isHandoffDue(tokens)) return { text: '◇ fresh', color: ROLE.emeraldLt }
-  return {
-    text: '⬢ h: handoff',
-    color: ROLE.warn,
-    bold: true,
-    press: { key: 'handoff', glyph: '⬢ ', label: 'handoff', hotkey: 'h', onPress: d.onHandoff },
-  }
-}
-
-// The resume slots of a session with no context yet: a key that fills the
-// prompt with /context-resume and the copied path, then the file's name.
-const RESUME_NAME_MAX = 36
-
-function resumeSlots(d: BandData): Slot[] {
-  if (d.resumePath === null) return []
-  const name = d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
-  return [
-    {
-      text: '⬢ r: resume',
-      color: ROLE.emeraldLt,
-      bold: true,
-      press: { key: 'resume', glyph: '⬢ ', label: 'resume', hotkey: 'r', onPress: d.onResume },
-    },
-    { text: truncate(name, RESUME_NAME_MAX), color: ROLE.muted },
-  ]
-}
-
-const CACHE_STATE: Record<CacheView['tone'], { text: string; }> = {
-  warm: { text: '● warm' },
-  warning: { text: '◐ cooling' },
-  cold: { text: '○ cold' },
-}
-
-// The cache cell drains as the cache cools: its bar shows the share of the
-// TTL that is left.
-function cacheCell(T: Table, d: BandData): BarCell {
-  const { Text } = T
-  const head = `${HOURGLASS} cache`
-  const c = d.cache
-  const v = d.cacheView
-  if (c === null || v === null) {
-    return { key: 'cache', label: [<Text color={ROLE.muted}>{head}</Text>], labelWidth: head.length, bar: null, slots: [{ text: '…', color: ROLE.muted }] }
-  }
-  const color = toneColor(v.tone)
-  const ttlMs = c.ttl === '1h' ? 3600000 : 300000
-  const leftMs = c.expiresAt === undefined ? 0 : Math.max(0, c.expiresAt - d.now)
-  const pct = v.tone === 'cold' ? 0 : Math.round((leftMs / ttlMs) * 100)
-  return {
-    key: 'cache',
-    label: [hoverGroup(T, 'cache', cacheCard(c, v), [<Text color={color}>{head}</Text>])],
-    labelWidth: head.length,
-    bar: { key: 'bar-cache', pct, color },
-    slots: [
-      { text: v.tone === 'cold' ? '0m' : v.label, color, isRight: true },
-      { text: `ttl ${c.ttl}`, color: ROLE.muted },
-      { text: CACHE_STATE[v.tone].text, color, bold: v.tone !== 'warm' },
-    ],
-  }
-}
-
-// The shared measures of one grid column of bar cells.
-type ColumnFit = { labelWidth: number; slotWidths: number[]; figuresWidth: number }
-
-function fitColumn(cells: readonly BarCell[]): ColumnFit {
-  const labelWidth = Math.max(0, ...cells.map(c => c.labelWidth))
-  const count = Math.max(0, ...cells.map(c => c.slots.length))
-  const slotWidths = Array.from({ length: count }, (_, i) => Math.max(0, ...cells.map(c => c.slots[i]?.text.length ?? 0)))
-  const figuresWidth = slotWidths.reduce((n, w) => n + w, 0) + GAP * Math.max(0, count - 1)
-  return { labelWidth, slotWidths, figuresWidth }
-}
-
-// The width a bar column needs for a bar of `barLength`: padding, label, a
-// space, the bar, a gap, then the figures.
-function columnNeed(f: ColumnFit, barLength: number): number {
-  return 1 + f.labelWidth + 1 + barLength + 2 + f.figuresWidth + 1
-}
-
-function barCell(T: Table, R: RasterEl, c: BarCell, f: ColumnFit, barLength: number, width: number, d: BandData): RenderElement {
-  const { Box, Text } = T
-  const figures = slotRow(T, c.slots, f.slotWidths, d)
-  const barEl = c.bar === null
-    ? <Text color={RULE_COLOR}>{'┄'.repeat(barLength)}</Text>
-    : bar(T, R, c.bar.key, c.bar.pct, c.bar.color, d, barLength)
-  return (
-    <Box key={`cell-${c.key}`} width={width} paddingX={1} overflow="hidden">
-      <Box flexShrink={0}>{c.label}</Box>
-      {leader(T, f.labelWidth - c.labelWidth + 1, d, 'both')}
-      {barEl}
-      {spaces(T, 2)}
-      {figures}
-    </Box>
-  )
-}
-
-// --- Git cells -----------------------------------------------------------------
-
-// The two git rows share one slot grid, so each column lines up down both:
-//
-//   key     ╱ branch   ╱ sync       ╱ commit at HEAD
-//   changes ╱ staged   ╱ unstaged   ╱ untracked ···· PR ╱ issues
-function gitRows(T: Table, d: BandData, width: number): [RenderElement, RenderElement] {
-  const { Box, Text } = T
-  const g = d.git
-  if (g === null) {
-    const none = <Box key="git-a" width={width} paddingX={1}><Text color={ROLE.muted}>⎇ no git repository</Text></Box>
-    return [none, <Box key="git-b" width={width} />]
-  }
-  const inner = width - 2
-  const jewel = JEWELS[d.phase % JEWELS.length] ?? ROLE.emeraldLt
-  const r = d.remote
-  const isClean = g.insertions + g.deletions === 0
-  const tree = g.worktree ? ` worktree:${g.worktree}` : ''
-  const name = `⎇ ${g.branch}`
-  const rowA: Slot[] = [
-    d.hasGitCommand
-      ? { text: 'g: git', color: ROLE.text, press: { key: 'git-pane', glyph: '', label: 'git', hotkey: 'g', onPress: d.onGit } }
-      : { text: '◇ git', color: ROLE.muted },
-    {
-      text: name + tree,
-      color: jewel,
-      node: [
-        hoverGroup(T, 'branch', `${g.repoPath || 'no GitHub remote'} · ${g.branch} → ${g.upstream || 'no upstream'} · ${g.ahead} ahead, ${g.behind} behind`, [
-          <Text color={jewel} bold>{name}</Text>,
-        ]),
-        tree ? <Text color={ROLE.sec}>{tree}</Text> : <Text />,
-      ],
-    },
-    g.upstream
-      ? { text: `↑${g.ahead} ↓${g.behind}`, color: g.ahead + g.behind > 0 ? ROLE.blondeLt : ROLE.muted }
-      : { text: 'no upstream', color: ROLE.muted },
-  ]
-  const diff = `+${g.insertions} -${g.deletions}`
-  const rowB: Slot[] = [
-    {
-      text: diff,
-      color: ROLE.muted,
-      node: [
-        <Text color={isClean ? ROLE.muted : ROLE.green}>{`+${g.insertions}`}</Text>,
-        <Text color={isClean ? ROLE.muted : ROLE.red}>{` -${g.deletions}`}</Text>,
-      ],
-    },
-    { text: `● ${g.staged} staged`, color: g.staged > 0 ? ROLE.green : ROLE.muted },
-    { text: `✚ ${g.unstaged} unstaged`, color: g.unstaged > 0 ? ROLE.orange : ROLE.muted },
-  ]
-  const widths = rowA.map((a, i) => Math.max(a.text.length, rowB[i]?.text.length ?? 0))
-  // The last column takes the rest of the row.
-  const rest = Math.max(0, inner - widths.reduce((n, w) => n + w + GAP, 0))
-
-  const headText = `⊙ ${g.hash}`
-  const age = g.age ? ` · ${g.age}` : ''
-  const subject = truncate(g.subject, rest - headText.length - 1 - age.length)
-  const lastA = [
-    <Text color={ROLE.muted}>{headText}</Text>,
-    <Text color={ROLE.sec}>{` ${subject}`}</Text>,
-    <Text color={ROLE.muted}>{age}</Text>,
-  ]
-
-  const untracked = `? ${g.untracked} untracked`
-  const pr = r?.prNumber == null ? '' : `PR #${r.prNumber}`
-  const issues = r?.issues ? `◈ ${r.issues} issues` : ''
-  const rightWidth = pr.length + issues.length + (pr && issues ? GAP : 0)
-  const lastB = [
-    <Text color={g.untracked > 0 ? ROLE.blondeLt : ROLE.muted}>{untracked}</Text>,
-    ...(rightWidth === 0 ? [] : [
-      leader(T, rest - untracked.length - rightWidth, d, 'both'),
-      pr ? hoverGroup(T, 'pr', r?.prTitle ?? pr, [<Text color={ROLE.teal}>{pr}</Text>]) : <Text />,
-      pr && issues ? sep(T, d) : <Text />,
-      issues ? <Text color={ROLE.teal}>{issues}</Text> : <Text />,
-    ]),
-  ]
-  return [
-    <Box key="git-a" width={width} paddingX={1} overflow="hidden">{slotRow(T, rowA, widths, d)}{sep(T, d)}{lastA}</Box>,
-    <Box key="git-b" width={width} paddingX={1} overflow="hidden">{slotRow(T, rowB, widths, d)}{sep(T, d)}{lastB}</Box>,
-  ]
-}
-
-// --- Layout --------------------------------------------------------------------
-
-// The solid rule between two panels. Each one takes the accent of the panel
-// it closes, Emerald Lt then Teal Lt, so it stands apart from the dim dotted
-// separators inside a panel. Inside the cache warning lead it warms to Blonde.
-const DIVIDER_COLORS = [ROLE.emeraldLt, ROLE.teal] as const
-
-function dividerColor(d: BandData, index: number): string {
-  return d.cacheView?.tone === 'warning' ? ROLE.warn : DIVIDER_COLORS[index] ?? ROLE.emeraldLt
-}
-
-// A run of frame glyphs in the colour of divider `index`.
-function rule(T: Table, d: BandData, index: number, text: string): RenderElement {
-  const { Text } = T
-  return <Text color={dividerColor(d, index)} bold>{text}</Text>
-}
-
-function divider(T: Table, d: BandData, index: number): RenderElement {
-  return rule(T, d, index, '│')
-}
-
-// The frame above the usage panel: a top border that turns down into the
-// first divider, then one padding row.
-function usageTop(T: Table, d: BandData, usageWidth: number): RenderElement[] {
-  const { Box } = T
-  return [
-    <Box key="usage-top">{rule(T, d, 0, `${'─'.repeat(usageWidth)}┐`)}</Box>,
-    <Box key="usage-pad">{spaces(T, usageWidth)}{divider(T, d, 0)}</Box>,
-  ]
-}
-
-// The frame below the context panel: one padding row, then a bottom border
-// that joins the divider on each side. Without a second divider, as in the
-// medium layout, the border runs open to the right.
-function contextBottom(T: Table, d: BandData, usageWidth: number, contextWidth: number, isClosed: boolean): RenderElement[] {
-  const { Box, Text } = T
-  return [
-    <Box key="context-pad">{spaces(T, usageWidth)}{divider(T, d, 0)}{spaces(T, contextWidth)}{isClosed ? divider(T, d, 1) : <Text />}</Box>,
-    <Box key="context-bottom">{spaces(T, usageWidth)}{rule(T, d, 0, '└')}{rule(T, d, 1, `${'─'.repeat(contextWidth)}${isClosed ? '┘' : ''}`)}</Box>,
-  ]
-}
-
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n))
-}
-
-// Wide: usage, context and git panels side by side. The bar columns take what their content
-// needs and git takes the rest, so no column carries empty space.
-function wideRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarCell[], BarCell[]]): RenderElement[] | null {
-  const { Box } = T
-  const fits = cols.map(fitColumn) as [ColumnFit, ColumnFit]
-  const fixed = fits.reduce((n, f) => n + columnNeed(f, 0), 0)
-  const barLength = clamp(Math.floor((inner - 2 - GIT_MIN - fixed) / 2), 0, BAR_MAX)
-  if (barLength < BAR_MIN) return null
-  const widths = fits.map(f => columnNeed(f, barLength))
-  const gitWidth = inner - 2 - widths.reduce((n, w) => n + w, 0)
-  const [gitA, gitB] = gitRows(T, d, gitWidth)
-  const rows = [0, 1].map(i => (
-    <Box key={`row-${i}`}>
-      {barCell(T, R, cols[0][i] as BarCell, fits[0], barLength, widths[0] ?? 0, d)}
-      {divider(T, d, 0)}
-      {barCell(T, R, cols[1][i] as BarCell, fits[1], barLength, widths[1] ?? 0, d)}
-      {divider(T, d, 1)}
-      {i === 0 ? gitA : gitB}
-    </Box>
-  ))
-  return [...usageTop(T, d, widths[0] ?? 0), ...rows, ...contextBottom(T, d, widths[0] ?? 0, widths[1] ?? 0, true)]
-}
-
-// Medium: the usage and context panels over two rows, then git in two full-width rows.
-function mediumRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarCell[], BarCell[]]): RenderElement[] {
-  const { Box } = T
-  const fits = cols.map(fitColumn) as [ColumnFit, ColumnFit]
-  const half = Math.floor((inner - 1) / 2)
-  const widths = [half, inner - 1 - half]
-  const barLength = clamp(Math.min(...fits.map((f, j) => (widths[j] ?? 0) - columnNeed(f, 0))), 4, BAR_MAX)
-  const [gitA, gitB] = gitRows(T, d, inner)
-  const bars = [0, 1].map(i => (
-    <Box key={`row-${i}`}>
-      {barCell(T, R, cols[0][i] as BarCell, fits[0], barLength, widths[0] ?? 0, d)}
-      {divider(T, d, 0)}
-      {barCell(T, R, cols[1][i] as BarCell, fits[1], barLength, widths[1] ?? 0, d)}
-    </Box>
-  ))
-  return [...usageTop(T, d, widths[0] ?? 0), ...bars, ...contextBottom(T, d, widths[0] ?? 0, widths[1] ?? 0, false), gitA, gitB]
-}
-
 // The folded form under NARROW_COLUMNS: one line of the key figures.
 function compactLine(T: Table, d: BandData): RenderElement | null {
   const { Box, Text } = T
@@ -667,21 +260,17 @@ function compactLine(T: Table, d: BandData): RenderElement | null {
   return bits.length === 0 ? null : <Box>{bits}</Box>
 }
 
-export function drawBand(T: Table, Raster: RasterEl, d: BandData): RenderElement {
+export function drawBand(T: Table, d: BandData): RenderElement {
   const { Box } = T
   const inner = Math.max(20, d.columns - RESERVE)
   if (d.columns < NARROW_COLUMNS) {
     const lines = [header(T, d, inner, true), compactLine(T, d)]
     return <Box flexDirection="column" marginTop={1}>{lines.filter((l): l is RenderElement => l !== null)}</Box>
   }
-  const u = d.usage
-  const cols: [BarCell[], BarCell[]] = [
-    [windowCell(T, '5h', u?.fiveHour, fiveHourColor, d), windowCell(T, '7d', u?.sevenDay, sevenDayColor, d)],
-    [contextCell(T, d), cacheCell(T, d)],
-  ]
-  const rows = (d.columns >= WIDE_COLUMNS ? wideRows(T, Raster, d, inner, cols) : null) ?? mediumRows(T, Raster, d, inner, cols)
-  // One empty row parts the band from the transcript above it. The usage
-  // panel's top border parts the header from the grid.
+  // One empty row parts the band from the transcript above it. The drawer
+  // slot under the header holds the account dropdown, or stays empty as a
+  // spacer on a wide band.
   const menu = accountRows(T, d)
-  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...menu, ...rows]}</Box>
+  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS ? [<Box key="drawer" height={1} />] : []
+  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...slot, ...ledgerRows(T, d, inner)]}</Box>
 }

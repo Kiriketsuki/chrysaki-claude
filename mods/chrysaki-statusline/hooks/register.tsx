@@ -654,7 +654,6 @@ export const register: Register = (on, options) => {
     if (e.props.hasSurvey) return next(e)
     const below = await next(e)
     const table = $.ui.resolve(e)
-    const Raster = 'Raster' in table ? table.Raster : undefined
     const [u, id, g, r, n, ph, now, home] = await Promise.all([
       read($, usage), read($, identity), read($, git), read($, remote), read($, inbox),
       isAnimated ? read($, phase) : Promise.resolve(0), $.clock.now(), $.env.get('HOME'),
@@ -665,7 +664,7 @@ export const register: Register = (on, options) => {
     const [accountList, profileList, menu, pendingLogin, isHintOpen] = await Promise.all([
       read($, accounts), read($, profiles), read($, accountMenu), read($, login), read($, hintOpen),
     ])
-    const band = drawBand(table, Raster, {
+    const band = drawBand(table, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       columns: e.props.bodyColumns, barStyle, usdToSgd,
       onContext: () => { void toastBreakdown($) },

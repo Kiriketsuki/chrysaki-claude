@@ -6,10 +6,10 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 
 - The band is one more ruled section of the prompt box. Its rules and column dividers take the engine's `promptBorder` theme colour, the colour of the prompt's own rules.
 - The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right.
-- Below the header, a grid of cells spans the full width: usage, context and git at 150 columns and up, two columns from 100. Under 100 columns the band folds to one line.
-- Each cell puts its label on the left and its figures in a table on the right. A dotted rule `┊` separates the figure columns, and dim `·` leaders fill the padding, so no column shows bare space. A bold solid rule separates the panels: Emerald Lt after usage, Teal Lt after context. The usage panel has a top border that turns down into its divider, and the context panel has a bottom border that joins both dividers. A padding row parts each border from the figures. The two git rows share one column grid.
+- Below the header, an empty drawer slot holds the account dropdown. The ledger under it sets every figure on one grid: usage, context and git share two rows at 200 columns and up. Below 200 columns git takes two rows of its own. Under 100 columns the band folds to one line.
+- Each ledger row opens with a filled jewel badge and a powerline edge: `5h` and `7d` on Emerald, `ctx` on Royal Blue, `cache` on Amethyst, `git` and `diff` on Teal. The badges are the only fills and the only separators. No rule or frame divides the panels. An empty row parts each ledger row from the next.
 - The context colour goes by tokens, not by percent: Teal under 250k, Blonde from 250k, Error from 500k. A 1M window and a 200k window warn at the same size.
-- Bars default to the static `line` style: `━` for the filled part, `─` in the rule colour for the rest.
+- Bars default to the static `line` style. Each usage bar cell takes the colour of its zone: Emerald Lt to 50%, Teal Lt to 75%, Blonde Lt to 90%, then Error Lt. The context zones sit at 250k and 500k tokens. Empty cells are dim sockets in the Border colour, and each percent takes the colour of the zone it reached.
 - Each segment shows a card with details on hover. The `ctx` control shows the context breakdown as a toast.
 - The band yields to surveys and stacks with the band of any other mod.
 
