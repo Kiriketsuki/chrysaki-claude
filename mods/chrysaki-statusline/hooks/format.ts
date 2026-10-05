@@ -3,7 +3,7 @@
 
 import { ROLE } from './palette'
 
-export type BarStyle = 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
+export type BarStyle = 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
 
 // 5h usage: Emerald Lt, Blonde from 50, Ruby from 75.
 export function fiveHourColor(pct: number): string {
@@ -61,6 +61,7 @@ export function untilReset(resetsAt: number | undefined, now: number): string {
 export type BarCell = { glyph: string; isFilled: boolean }
 
 const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
+  line: ['━', '─'],
   hex: ['⬢', '⬡'],
   diamond: ['◆', '◇'],
   circle: ['●', '○'],

@@ -85,11 +85,12 @@ function hoverGroup(T: Table, key: string, card: string, children: RenderElement
 
 function bar(T: Table, Raster: ElementConstructor<RasterProps> | undefined, key: string, pct: number, color: string, d: BandData, length = 8): RenderElement {
   const cells = barCells(pct, d.barStyle, d.phase % 4, length)
-  if (Raster !== undefined) return <Raster key={key} columns={length} rows={1} cells={barRaster(cells, color, ROLE.hexEmpty)} />
+  const isLine = d.barStyle === 'line'
+  if (Raster !== undefined && !isLine) return <Raster key={key} columns={length} rows={1} cells={barRaster(cells, color, ROLE.hexEmpty)} />
   const { Text } = T
   const on = cells.filter(c => c.isFilled).map(c => c.glyph).join('')
   const off = cells.filter(c => !c.isFilled).map(c => c.glyph).join('')
-  return <Text><Text color={color}>{on}</Text><Text color={ROLE.hexEmpty}>{off}</Text></Text>
+  return <Text><Text color={color}>{on}</Text><Text color={isLine ? RULE_COLOR : ROLE.hexEmpty}>{off}</Text></Text>
 }
 
 function sep(T: Table): RenderElement {
@@ -99,10 +100,11 @@ function sep(T: Table): RenderElement {
 
 // --- Layout ------------------------------------------------------------------
 //
-// The band is a chamfered frame that sits on the prompt. The header is a thin
-// rule with cut corners (╱ ╲) that carries the brand segments. Below it, a
-// grid of cells spans the full width between │ edges. The prompt's own ─ rule
-// closes the frame from below, so the band and the prompt read as one block.
+// The band is one more ruled section of the prompt box. Its rules and column
+// dividers take the theme colour the engine draws the prompt's own rules in
+// (`promptBorder`), so the band, the hint row and the prompt read as one
+// stack. The header rule carries the brand segments. Below it, a grid of
+// cells spans the full width.
 
 // The engine draws its collapse mark `[-]` over the last cells of the band's
 // first row. The frame stops short of it.
@@ -110,6 +112,8 @@ const RESERVE = 4
 // At this width and above, the grid has three columns. Below it, two.
 export const WIDE_COLUMNS = 150
 const RULE = '─'
+// The theme key of the prompt's rules. Text colours take a theme key.
+const RULE_COLOR = 'promptBorder'
 
 // What fills a cell between its left and right groups: a bar stretched to
 // the free width, or a dotted leader, as a table of contents aligns a page
@@ -130,7 +134,7 @@ const MIN_FILL = 3
 function frameColor(d: BandData): string {
   // The frame warms to Blonde inside the cache warning lead, so the alert
   // also shows in the shape of the band.
-  return d.cacheView?.tone === 'warning' ? ROLE.warn : CORE.border
+  return d.cacheView?.tone === 'warning' ? ROLE.warn : RULE_COLOR
 }
 
 function fillElement(T: Table, R: ElementConstructor<RasterProps> | undefined, f: Fill, length: number, d: BandData): RenderElement {
@@ -152,18 +156,18 @@ function cell(T: Table, R: ElementConstructor<RasterProps> | undefined, c: Cell,
   )
 }
 
-// One grid row: cells of equal width between │ edges. The last cell takes the
-// columns left over from the division.
+// One grid row: cells of equal width with │ dividers between them. The last
+// cell takes the columns left over from the division.
 function row(T: Table, R: ElementConstructor<RasterProps> | undefined, key: string, cells: readonly Cell[], inner: number, d: BandData): RenderElement {
   const { Box, Text } = T
   const edge = frameColor(d)
-  const room = inner - 2 - (cells.length - 1)
+  const room = inner - (cells.length - 1)
   const base = Math.floor(room / cells.length)
-  const parts: RenderElement[] = [<Text color={edge}>│</Text>]
+  const parts: RenderElement[] = []
   cells.forEach((c, i) => {
     const width = i === cells.length - 1 ? room - base * (cells.length - 1) : base
+    if (i > 0) parts.push(<Text color={edge}>│</Text>)
     parts.push(cell(T, R, c, width, d))
-    parts.push(<Text color={edge}>│</Text>)
   })
   return <Box key={`row-${key}`}>{parts}</Box>
 }
@@ -173,40 +177,32 @@ function muted(T: Table, text: string): RenderElement {
   return <Text color={ROLE.muted}>{text}</Text>
 }
 
-// The header: ╱─ brand segments ─── gradient rule ─── cost · clock · email ─╲
-function header(T: Table, Raster: ElementConstructor<RasterProps> | undefined, d: BandData, inner: number): RenderElement {
+// The header: a rule in the prompt's colour that carries the brand
+// segments on the left and cost, clock and account on the right.
+function header(T: Table, d: BandData, inner: number): RenderElement {
   const { Box, Text } = T
   const id = d.identity
   const u = d.usage
   const edge = frameColor(d)
-  const badge = d.phase % 2 === 0 ? '⬢' : '⬡'
   const segs: Seg[] = [
-    { text: `${badge} ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true },
+    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true },
     ...(id?.version ? [{ text: `v${id.version}`, bg: CORE.blueLight, fg: ROLE.text }] : []),
     { text: smartCwd(id?.cwd ?? '', d.home), bg: CORE.amethystLight, fg: ROLE.text, bold: true },
   ]
   const cost = u?.costUsd === undefined ? '' : `$${costSgd(u.costUsd, d.usdToSgd)}`
   const clock = u?.startedAt === undefined ? '' : sessionClock(d.now - u.startedAt)
-  const email = id?.email ?? ''
   const inbox = d.inbox > 0 ? `◇ inbox ${d.inbox}` : ''
   const tail = [inbox, cost, clock].filter(s => s.length > 0).join('  ◆  ')
+  const email = id?.email ?? ''
   const tailWidth = (tail.length > 0 ? tail.length + 2 : 0) + (email.length > 0 ? email.length + 2 : 0)
-  // Corner, rule, segments, rule fill, tail, rule, corner.
-  const room = inner - 2 - 2 - zigzagWidth(segs) - 1 - tailWidth - 1
-  const fill = room < 1
-    ? null
-    : Raster !== undefined
-      ? <Raster key="bridge" columns={room} rows={1} cells={bridgeCells(room, BRAND_STOPS, d.phase, 0x2500)} />
-      : <Text color={JEWELS_DIM[d.phase % JEWELS_DIM.length]}>{RULE.repeat(room)}</Text>
+  const room = Math.max(0, inner - zigzagWidth(segs) - 1 - tailWidth - 2)
   return (
     <Box key="header">
-      <Text color={edge}>{`╱${RULE}`}</Text>
       {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, segs))}
-      <Text color={edge}>{RULE}</Text>
-      {fill ?? <Text />}
+      <Text color={edge}>{` ${RULE.repeat(room)}`}</Text>
       {tail.length > 0 ? hoverGroup(T, 'cost', u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`, [<Text color={ROLE.sec}>{` ${tail} `}</Text>]) : <Text />}
       {email.length > 0 ? <Text color={id?.isWorkAccount ? ROLE.orange : ROLE.emeraldLt}>{` ${email} `}</Text> : <Text />}
-      <Text color={edge}>{`${RULE}╲`}</Text>
+      <Text color={edge}>{RULE.repeat(2)}</Text>
     </Box>
   )
 }
@@ -363,7 +359,7 @@ export function drawBand(T: Table, Raster: ElementConstructor<RasterProps> | und
   const { Box } = T
   const inner = Math.max(20, d.columns - RESERVE)
   if (d.columns < NARROW_COLUMNS) {
-    const lines = [header(T, Raster, { ...d, identity: d.identity === null ? null : { ...d.identity, email: '' } }, inner), compactLine(T, d)]
+    const lines = [header(T, { ...d, identity: d.identity === null ? null : { ...d.identity, email: '' } }, inner), compactLine(T, d)]
     return <Box flexDirection="column">{lines.filter((l): l is RenderElement => l !== null)}</Box>
   }
   const [five, seven] = usageCells(T, d)
@@ -373,5 +369,5 @@ export function drawBand(T: Table, Raster: ElementConstructor<RasterProps> | und
   const rows = d.columns >= WIDE_COLUMNS
     ? [row(T, Raster, 'a', [five, ctx, branch], inner, d), row(T, Raster, 'b', [seven, cache, changes], inner, d)]
     : [row(T, Raster, 'a', [five, ctx], inner, d), row(T, Raster, 'b', [seven, cache], inner, d), row(T, Raster, 'c', [branch, changes], inner, d)]
-  return <Box flexDirection="column">{[header(T, Raster, d, inner), ...rows]}</Box>
+  return <Box flexDirection="column">{[header(T, d, inner), ...rows]}</Box>
 }

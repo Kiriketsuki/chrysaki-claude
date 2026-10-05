@@ -4,12 +4,13 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 
 ## What changes from the bash statusline
 
-- Segment edges follow the tmux zigzag-alt preset `(|,\)`, with the same powerline glyphs as `chrysaki/tmux/chrysaki.conf`.
-- On the terminal, a Raster draws the progress bars and the tri-primary brand gradient. The gradient mixes colours in OKLab. The desktop surface draws text bars.
-- Each segment shows a card with details on hover.
-- The `ctx` control shows the context breakdown as a toast.
-- Under 100 columns the band folds to two lines.
-- The band yields to surveys and stacks with the band of any other mod, such as `git-pane`.
+- The band is one more ruled section of the prompt box. Its rules and column dividers take the engine's `promptBorder` theme colour, the colour of the prompt's own rules.
+- The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right.
+- Below the header, a grid of cells spans the full width: usage, context and git at 150 columns and up, two columns from 100. Under 100 columns the band folds to one line.
+- Each cell puts its label on the left and its figures flush right. A bar or a dotted leader fills the space between them, so the figures line up down each column.
+- Bars default to the static `line` style: `━` for the filled part, `─` in the rule colour for the rest.
+- Each segment shows a card with details on hover. The `ctx` control shows the context breakdown as a toast.
+- The band yields to surveys and stacks with the band of any other mod.
 
 The engine sends rate limits, context and cost to the mod. Git, GitHub and vault data come from `git`, `gh` and the file system. The mod caches GitHub data for 5 minutes.
 
@@ -49,8 +50,8 @@ The mod also does not draw OSC 8 links.
 
 | Option | Default | Meaning |
 |:---|:---|:---|
-| `barStyle` | `wave` | Bar glyphs: `wave`, `hex`, `diamond`, `circle` or `block` |
-| `animate` | `on` | Scroll the bars and the gradient every 2 seconds |
+| `barStyle` | `line` | Bar glyphs: `line`, `wave`, `hex`, `diamond`, `circle` or `block` |
+| `animate` | `off` | Scroll the wave bars and pulse the badge every 2 seconds |
 | `usdToSgd` | `1.35` | Multiplier for the cost segment |
 | `cacheWarnLead` | `auto` | Seconds before expiry to warn: `auto` (60 for 5m, 300 for 1h), `60`, `120`, `300` or `600` |
 | `cacheMinTokens` | `20000` | Warn only when a cold turn writes at least this many tokens |

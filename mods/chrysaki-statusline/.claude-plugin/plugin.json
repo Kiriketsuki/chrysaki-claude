@@ -10,9 +10,10 @@
     "barStyle": {
       "type": "string",
       "title": "Bar style",
-      "description": "Progress bar glyphs, as CHRYSAKI_BAR_STYLE",
-      "default": "wave",
+      "description": "Progress bar glyphs. line draws filled and empty rules in the prompt colour",
+      "default": "line",
       "options": [
+        "line",
         "wave",
         "hex",
         "diamond",
@@ -23,8 +24,8 @@
     "animate": {
       "type": "string",
       "title": "Animation",
-      "description": "Scroll the wave bars and the brand gradient every 2 seconds",
-      "default": "on",
+      "description": "Scroll the wave bars and pulse the badge every 2 seconds",
+      "default": "off",
       "options": [
         "on",
         "off"

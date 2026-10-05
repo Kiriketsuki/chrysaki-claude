@@ -220,8 +220,8 @@ async function toastBreakdown($: EngineInterface): Promise<void> {
 }
 
 export const register: Register = (on, options) => {
-  const barStyle = String(options.barStyle ?? 'wave') as BarStyle
-  const isAnimated = String(options.animate ?? 'on') === 'on'
+  const barStyle = String(options.barStyle ?? 'line') as BarStyle
+  const isAnimated = String(options.animate ?? 'off') === 'on'
   const usdToSgd = Number(options.usdToSgd ?? '1.35') || 1.35
   // Set when the model pushes or calls gh. The next slow refresh then skips
   // the five-minute cache. A reload clears it, which costs one late update.
