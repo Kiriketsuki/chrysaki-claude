@@ -20,9 +20,14 @@ export function sevenDayColor(pct: number): string {
 }
 
 // ctx: Teal, orange from 50 percent, Ruby from 128k tokens absolute.
-export function ctxColor(pct: number, tokens: number | undefined): string {
-  if (tokens !== undefined && tokens >= 128000) return ROLE.error
-  if (pct >= 50) return ROLE.orange
+// The ctx thresholds go by tokens, not by percent, so a 1M window and a 200k
+// window warn at the same size: amber from 250k, red from 500k.
+export const CTX_AMBER_TOKENS = 250000
+export const CTX_RED_TOKENS = 500000
+
+export function ctxColor(_pct: number, tokens: number | undefined): string {
+  if (tokens !== undefined && tokens >= CTX_RED_TOKENS) return ROLE.error
+  if (tokens !== undefined && tokens >= CTX_AMBER_TOKENS) return ROLE.warn
   return ROLE.teal
 }
 
@@ -33,9 +38,9 @@ export function marker(pct: number, warnAt: number, critAt: number): string {
   return '▰'
 }
 
-export function ctxMarker(pct: number, tokens: number | undefined): string {
-  if (tokens !== undefined && tokens >= 128000) return '◆'
-  if (pct >= 50) return '▱'
+export function ctxMarker(_pct: number, tokens: number | undefined): string {
+  if (tokens !== undefined && tokens >= CTX_RED_TOKENS) return '◆'
+  if (tokens !== undefined && tokens >= CTX_AMBER_TOKENS) return '▱'
   return '▰'
 }
 

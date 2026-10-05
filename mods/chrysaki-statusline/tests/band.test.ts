@@ -2,6 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
+import { handoffPathFrom } from '../hooks/resume'
+
 const SURFACES = ['terminal', 'desktop'] as const
 const RAN = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const STATUS = '# branch.oid 9f25299abcdef\n# branch.head main\n# branch.ab +2 -0\n1 .M N... 100644 100644 100644 a b x.ts\n'
@@ -191,4 +193,76 @@ test('a /context-handoff typed by hand also gets its path copied', async ($, on)
   await $.tool.call({ tool: 'Write', file_path: path, content: '# Handoff' })
   await $.turn.complete({ turnId: 't2', reason: 'end_turn', answer: '', usage: null } as never)
   expect(copied).toEqual([path])
+})
+
+// The resume key: a fresh session reads the clipboard with wl-paste. A handoff
+// path there draws the key, and a press fills the prompt box.
+async function resumeTest($: Engine, on: On, clipboard: string, draft: string): Promise<{ found: boolean; filled: string[] }> {
+  const clock = answerMeasure(on)
+  on('process.run', async (_$, e) => {
+    if (e.argv[0] === 'wl-paste') return { value: { ...RAN, stdout: clipboard } }
+    return { value: { ...RAN, exitCode: 1, stdout: '' } }
+  })
+  on('env.set', async () => ({ value: undefined }))
+  on('fs.exists', async () => ({ value: true }))
+  on('settings.read', async () => ({ value: {} }))
+  on('command.list', async () => ({ value: [] }))
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  on('prompt.read', async () => ({ value: { text: draft, cursor: draft.length } }))
+  const filled: string[] = []
+  on('prompt.fill', async (_$, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
+  await $.session.start({ cwd: '/home/k/repo', surface: 'terminal', isInteractive: true })
+  await clock.advance(0)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
+  const button = await ui.find({ key: 'resume' })
+  if (button !== undefined) await ui.press({ key: 'resume' })
+  await ui.unmount()
+  return { found: button !== undefined, filled }
+}
+
+const HANDOFF = '/home/k/repo/.claude/handoffs/2026-10-05-08h55-band.md'
+
+test('a handoff path on the clipboard draws the resume key, which fills the prompt', async ($, on) => {
+  const r = await resumeTest($, on, `${HANDOFF}\n`, '')
+  expect(r.found).toBe(true)
+  expect(r.filled).toEqual([`/context-resume ${HANDOFF}`])
+})
+
+test('the resume key reads ~ paths and whole /context-resume lines', async () => {
+  expect(handoffPathFrom('~/.claude/handoffs/2026-10-05-08h55-band.md', '/home/k')).toBe('/home/k/.claude/handoffs/2026-10-05-08h55-band.md')
+  expect(handoffPathFrom(`/context-resume "${HANDOFF}" active`, '/home/k')).toBe(HANDOFF)
+  expect(handoffPathFrom('/home/k/.claude/handoffs/overflow-band.md', '/home/k')).toBe(null)
+  expect(handoffPathFrom(`${HANDOFF}\nsecond line`, '/home/k')).toBe(null)
+})
+
+test('other clipboard text draws no resume key', async ($, on) => {
+  const r = await resumeTest($, on, 'some copied sentence', '')
+  expect(r.found).toBe(false)
+})
+
+test('the resume key never writes over a draft', async ($, on) => {
+  const r = await resumeTest($, on, HANDOFF, 'half a prompt')
+  expect(r.found).toBe(true)
+  expect(r.filled).toEqual([])
+})
+
+test('the git rows line up in shared columns with separators', async ($, on) => {
+  answerMeasure(on)
+  on('process.run', async (_$, e) => {
+    const cmd = e.argv.join(' ')
+    if (cmd.startsWith('git status')) return { value: { ...RAN, stdout: STATUS } }
+    return { value: { ...RAN, exitCode: 1, stdout: '' } }
+  })
+  on('tool.call', { tool: 'Bash' }, async () => ({ result: { stdout: '', stderr: '', interrupted: false }, text: 'ok' }))
+  await $.session.measure(MEASURE)
+  await $.tool.call({ tool: 'Bash', command: 'git status' })
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
+  const seps = await ui.findAll({ type: 'Text', text: ' ┊ ' })
+  expect(seps.length).toBeGreaterThanOrEqual(6)
+  // No figure column pads with three or more bare spaces.
+  expect(await ui.find({ type: 'Text', text: /^ {3,}$/ })).toBeUndefined()
+  await ui.unmount()
 })

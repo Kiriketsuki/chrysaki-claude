@@ -55,8 +55,11 @@ export function usageFrom(u: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost
   }
 }
 
+// A measurement with no reading for a window keeps the previous one, so a
+// window seeded from the store survives the first context-only measurement.
 export function usageFromMeasure(e: SessionMeasureInput, previous: StatuslineUsage | null): StatuslineUsage {
-  return { ...usageFrom(e), startedAt: previous?.startedAt }
+  const u = usageFrom(e)
+  return { ...u, fiveHour: u.fiveHour ?? previous?.fiveHour, sevenDay: u.sevenDay ?? previous?.sevenDay, startedAt: previous?.startedAt }
 }
 
 export async function readIdentity(host: Host): Promise<StatuslineIdentity> {

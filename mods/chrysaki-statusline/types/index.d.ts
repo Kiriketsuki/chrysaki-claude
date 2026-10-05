@@ -98,6 +98,8 @@ declare module 'claude-code' {
       cacheAlert: CacheAlert
       hasGitCommand: boolean
       handoff: PendingHandoff | null
+      // A handoff path on the clipboard, shown as the resume key in a fresh session.
+      resume: string | null
     }
   }
 }

@@ -40,6 +40,9 @@ export type BandData = {
   // True while a handoff the band started is still being written.
   isHandingOff: boolean
   onHandoff: () => void
+  // The handoff path on the clipboard, while the session has no context yet.
+  resumePath: string | null
+  onResume: () => void
 }
 
 // Below this width the band folds to the header and one line.
@@ -54,7 +57,12 @@ const RULE = '─'
 // The theme key of the prompt's rules. Text colours take a theme key.
 const RULE_COLOR = 'promptBorder'
 const HOURGLASS = '⧗'
-const GAP = 3
+// The separator between two figure columns, as wide as GAP. A dotted rule
+// stays quieter than the solid cell divider.
+const SEP = ' ┊ '
+const GAP = SEP.length
+// The leader that fills a slot's padding, so a table never shows bare space.
+const LEADER = '·'
 const BAR_MIN = 12
 const BAR_MAX = 40
 const GIT_MIN = 60
@@ -111,6 +119,22 @@ function hoverGroup(T: Table, key: string, card: string, children: RenderElement
 function spaces(T: Table, n: number): RenderElement {
   const { Text } = T
   return <Text>{' '.repeat(Math.max(0, n))}</Text>
+}
+
+// A run of leader dots in the rule colour. One space keeps the dots off the
+// figure, on the side the figure is: `before` a right-aligned figure, `after`
+// a left-aligned one. The separator beside it brings its own space.
+function leader(T: Table, n: number, d: BandData, side: 'before' | 'after' | 'both' = 'after'): RenderElement {
+  const { Text } = T
+  const ends = side === 'both' ? 2 : 1
+  if (n <= ends) return spaces(T, n)
+  const dots = LEADER.repeat(n - ends)
+  return <Text color={frameColor(d)}>{side === 'after' ? ` ${dots}` : side === 'before' ? `${dots} ` : ` ${dots} `}</Text>
+}
+
+function sep(T: Table, d: BandData): RenderElement {
+  const { Text } = T
+  return <Text color={frameColor(d)}>{SEP}</Text>
 }
 
 function bar(T: Table, R: RasterEl, key: string, pct: number, color: string, d: BandData, length: number): RenderElement {
@@ -180,6 +204,30 @@ type Slot = {
   // A pressable slot: a coloured glyph, then a plain Button. `text` holds the
   // whole drawn width, glyph and hotkey included, for the column measure.
   press?: { key: string; glyph: string; label: string; hotkey: string; onPress: () => void }
+  // Drawn in place of `text`, which still gives the width.
+  node?: RenderElement[]
+}
+
+// One slot at width `w`: the figure and a leader over the rest. An empty
+// slot is all leader.
+function slotEls(T: Table, s: Slot | undefined, w: number, d: BandData): RenderElement[] {
+  const { Text, Button } = T
+  if (s === undefined || s.text === '') return [leader(T, w, d)]
+  const pad = leader(T, w - s.text.length, d, s.isRight ? 'before' : 'after')
+  if (s.press !== undefined) {
+    return [
+      <Text color={s.color} bold={s.bold}>{s.press.glyph}</Text>,
+      <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />,
+      pad,
+    ]
+  }
+  const body = s.node ?? [<Text color={s.color} bold={s.bold}>{s.text}</Text>]
+  return s.isRight ? [pad, ...body] : [...body, pad]
+}
+
+// A row of slots at the column widths, joined by separators.
+function slotRow(T: Table, slots: readonly Slot[], widths: readonly number[], d: BandData): RenderElement[] {
+  return widths.flatMap((w, i) => [...(i > 0 ? [sep(T, d)] : []), ...slotEls(T, slots[i], w, d)])
 }
 
 type BarCell = {
@@ -213,7 +261,7 @@ function contextCell(T: Table, d: BandData): BarCell {
   const { Text, Button } = T
   const u = d.usage
   if (u?.ctxPercent === undefined) {
-    return { key: 'ctx', label: [<Text color={ROLE.muted}>{'▰ ctx  '}</Text>], labelWidth: 7, bar: null, slots: [] }
+    return { key: 'ctx', label: [<Text color={ROLE.muted}>{'▰ ctx  '}</Text>], labelWidth: 7, bar: null, slots: resumeSlots(d) }
   }
   const pct = u.ctxPercent
   const color = ctxColor(pct, u.ctxTokens)
@@ -244,6 +292,24 @@ function handoffSlot(tokens: number | undefined, d: BandData): Slot {
     bold: true,
     press: { key: 'handoff', glyph: '⬢ ', label: 'handoff', hotkey: 'h', onPress: d.onHandoff },
   }
+}
+
+// The resume slots of a session with no context yet: a key that fills the
+// prompt with /context-resume and the copied path, then the file's name.
+const RESUME_NAME_MAX = 36
+
+function resumeSlots(d: BandData): Slot[] {
+  if (d.resumePath === null) return []
+  const name = d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
+  return [
+    {
+      text: '⬢ r: resume',
+      color: ROLE.emeraldLt,
+      bold: true,
+      press: { key: 'resume', glyph: '⬢ ', label: 'resume', hotkey: 'r', onPress: d.onResume },
+    },
+    { text: truncate(name, RESUME_NAME_MAX), color: ROLE.muted },
+  ]
 }
 
 const CACHE_STATE: Record<CacheView['tone'], { text: string; }> = {
@@ -297,31 +363,15 @@ function columnNeed(f: ColumnFit, barLength: number): number {
 }
 
 function barCell(T: Table, R: RasterEl, c: BarCell, f: ColumnFit, barLength: number, width: number, d: BandData): RenderElement {
-  const { Box, Text, Button } = T
-  const figures: RenderElement[] = []
-  f.slotWidths.forEach((w, i) => {
-    const s = c.slots[i]
-    if (i > 0) figures.push(spaces(T, GAP))
-    if (s === undefined || s.text === '') {
-      figures.push(spaces(T, w))
-      return
-    }
-    if (s.press !== undefined) {
-      figures.push(<Text color={s.color} bold={s.bold}>{s.press.glyph}</Text>)
-      figures.push(<Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />)
-      figures.push(spaces(T, w - s.text.length))
-      return
-    }
-    const padded = s.isRight ? s.text.padStart(w) : s.text.padEnd(w)
-    figures.push(<Text color={s.color} bold={s.bold}>{padded}</Text>)
-  })
+  const { Box, Text } = T
+  const figures = slotRow(T, c.slots, f.slotWidths, d)
   const barEl = c.bar === null
     ? <Text color={RULE_COLOR}>{'┄'.repeat(barLength)}</Text>
     : bar(T, R, c.bar.key, c.bar.pct, c.bar.color, d, barLength)
   return (
     <Box key={`cell-${c.key}`} width={width} paddingX={1} overflow="hidden">
       <Box flexShrink={0}>{c.label}</Box>
-      {spaces(T, f.labelWidth - c.labelWidth + 1)}
+      {leader(T, f.labelWidth - c.labelWidth + 1, d, 'both')}
       {barEl}
       {spaces(T, 2)}
       {figures}
@@ -331,10 +381,12 @@ function barCell(T: Table, R: RasterEl, c: BarCell, f: ColumnFit, barLength: num
 
 // --- Git cells -----------------------------------------------------------------
 
-// Row one: the branch and its upstream, then the commit at HEAD. Row two: the
-// changes, then pull request and issues flush right.
+// The two git rows share one slot grid, so each column lines up down both:
+//
+//   key     ╱ branch   ╱ sync       ╱ commit at HEAD
+//   changes ╱ staged   ╱ unstaged   ╱ untracked ···· PR ╱ issues
 function gitRows(T: Table, d: BandData, width: number): [RenderElement, RenderElement] {
-  const { Box, Text, Button } = T
+  const { Box, Text } = T
   const g = d.git
   if (g === null) {
     const none = <Box key="git-a" width={width} paddingX={1}><Text color={ROLE.muted}>⎇ no git repository</Text></Box>
@@ -343,51 +395,70 @@ function gitRows(T: Table, d: BandData, width: number): [RenderElement, RenderEl
   const inner = width - 2
   const jewel = JEWELS[d.phase % JEWELS.length] ?? ROLE.emeraldLt
   const r = d.remote
-  const key = d.hasGitCommand ? 'g: git  ' : ''
-  const name = `⎇ ${g.branch}`
-  const sync = g.upstream ? `  ↑${g.ahead} ↓${g.behind}` : '  no upstream'
-  const tree = g.worktree ? `  worktree:${g.worktree}` : ''
-  const headText = `⊙ ${g.hash}`
-  const age = g.age ? `  · ${g.age}` : ''
-  const used = key.length + name.length + sync.length + tree.length + GAP + headText.length + 1 + age.length
-  const subject = truncate(g.subject, inner - used)
-  const rowA = (
-    <Box key="git-a" width={width} paddingX={1} overflow="hidden">
-      {d.hasGitCommand ? <Button key="git-pane" label="git" hotkey="g" plain onPress={d.onGit} /> : <Text />}
-      {d.hasGitCommand ? spaces(T, 2) : <Text />}
-      {hoverGroup(T, 'branch', `${g.repoPath || 'no GitHub remote'} · ${g.branch} → ${g.upstream || 'no upstream'} · ${g.ahead} ahead, ${g.behind} behind`, [
-        <Text color={jewel} bold>{name}</Text>,
-      ])}
-      <Text color={g.ahead + g.behind > 0 ? ROLE.blondeLt : ROLE.muted}>{sync}</Text>
-      {tree ? <Text color={ROLE.sec}>{tree}</Text> : <Text />}
-      {spaces(T, GAP)}
-      <Text color={ROLE.muted}>{headText}</Text>
-      <Text color={ROLE.sec}>{` ${subject}`}</Text>
-      <Text color={ROLE.muted}>{age}</Text>
-    </Box>
-  )
   const isClean = g.insertions + g.deletions === 0
-  const counts = [
+  const tree = g.worktree ? ` worktree:${g.worktree}` : ''
+  const name = `⎇ ${g.branch}`
+  const rowA: Slot[] = [
+    d.hasGitCommand
+      ? { text: 'g: git', color: ROLE.text, press: { key: 'git-pane', glyph: '', label: 'git', hotkey: 'g', onPress: d.onGit } }
+      : { text: '◇ git', color: ROLE.muted },
+    {
+      text: name + tree,
+      color: jewel,
+      node: [
+        hoverGroup(T, 'branch', `${g.repoPath || 'no GitHub remote'} · ${g.branch} → ${g.upstream || 'no upstream'} · ${g.ahead} ahead, ${g.behind} behind`, [
+          <Text color={jewel} bold>{name}</Text>,
+        ]),
+        tree ? <Text color={ROLE.sec}>{tree}</Text> : <Text />,
+      ],
+    },
+    g.upstream
+      ? { text: `↑${g.ahead} ↓${g.behind}`, color: g.ahead + g.behind > 0 ? ROLE.blondeLt : ROLE.muted }
+      : { text: 'no upstream', color: ROLE.muted },
+  ]
+  const diff = `+${g.insertions} -${g.deletions}`
+  const rowB: Slot[] = [
+    {
+      text: diff,
+      color: ROLE.muted,
+      node: [
+        <Text color={isClean ? ROLE.muted : ROLE.green}>{`+${g.insertions}`}</Text>,
+        <Text color={isClean ? ROLE.muted : ROLE.red}>{` -${g.deletions}`}</Text>,
+      ],
+    },
     { text: `● ${g.staged} staged`, color: g.staged > 0 ? ROLE.green : ROLE.muted },
     { text: `✚ ${g.unstaged} unstaged`, color: g.unstaged > 0 ? ROLE.orange : ROLE.muted },
-    { text: `? ${g.untracked} untracked`, color: g.untracked > 0 ? ROLE.blondeLt : ROLE.muted },
   ]
+  const widths = rowA.map((a, i) => Math.max(a.text.length, rowB[i]?.text.length ?? 0))
+  // The last column takes the rest of the row.
+  const rest = Math.max(0, inner - widths.reduce((n, w) => n + w + GAP, 0))
+
+  const headText = `⊙ ${g.hash}`
+  const age = g.age ? ` · ${g.age}` : ''
+  const subject = truncate(g.subject, rest - headText.length - 1 - age.length)
+  const lastA = [
+    <Text color={ROLE.muted}>{headText}</Text>,
+    <Text color={ROLE.sec}>{` ${subject}`}</Text>,
+    <Text color={ROLE.muted}>{age}</Text>,
+  ]
+
+  const untracked = `? ${g.untracked} untracked`
   const pr = r?.prNumber == null ? '' : `PR #${r.prNumber}`
   const issues = r?.issues ? `◈ ${r.issues} issues` : ''
-  const rightText = [pr, issues].filter(s => s).join('   ')
-  const leftWidth = `+${g.insertions} -${g.deletions}`.length + counts.reduce((n, c) => n + GAP + c.text.length, 0)
-  const rowB = (
-    <Box key="git-b" width={width} paddingX={1} overflow="hidden">
-      <Text color={isClean ? ROLE.muted : ROLE.green}>{`+${g.insertions}`}</Text>
-      <Text color={isClean ? ROLE.muted : ROLE.red}>{` -${g.deletions}`}</Text>
-      {counts.flatMap(c => [spaces(T, GAP), <Text color={c.color}>{c.text}</Text>])}
-      {spaces(T, inner - leftWidth - rightText.length)}
-      {pr ? hoverGroup(T, 'pr', r?.prTitle ?? pr, [<Text color={ROLE.teal}>{pr}</Text>]) : <Text />}
-      {pr && issues ? spaces(T, GAP) : <Text />}
-      {issues ? <Text color={ROLE.teal}>{issues}</Text> : <Text />}
-    </Box>
-  )
-  return [rowA, rowB]
+  const rightWidth = pr.length + issues.length + (pr && issues ? GAP : 0)
+  const lastB = [
+    <Text color={g.untracked > 0 ? ROLE.blondeLt : ROLE.muted}>{untracked}</Text>,
+    ...(rightWidth === 0 ? [] : [
+      leader(T, rest - untracked.length - rightWidth, d, 'both'),
+      pr ? hoverGroup(T, 'pr', r?.prTitle ?? pr, [<Text color={ROLE.teal}>{pr}</Text>]) : <Text />,
+      pr && issues ? sep(T, d) : <Text />,
+      issues ? <Text color={ROLE.teal}>{issues}</Text> : <Text />,
+    ]),
+  ]
+  return [
+    <Box key="git-a" width={width} paddingX={1} overflow="hidden">{slotRow(T, rowA, widths, d)}{sep(T, d)}{lastA}</Box>,
+    <Box key="git-b" width={width} paddingX={1} overflow="hidden">{slotRow(T, rowB, widths, d)}{sep(T, d)}{lastB}</Box>,
+  ]
 }
 
 // --- Layout --------------------------------------------------------------------

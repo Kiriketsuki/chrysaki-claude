@@ -9,6 +9,10 @@ import type { Host } from './collect'
 import { drawBand } from './draw'
 import type { BarStyle } from './format'
 import { kilo } from './format'
+import { limitsKey, parseSaved, rollUsage, toSaved, withSaved } from './limits'
+import { HANDOFF_FILE, handoffPathFrom, resumeCommand } from './resume'
+
+export { HANDOFF_FILE }
 
 const usage = atom({ plugin: 'chrysaki-statusline', key: 'usage' } as const, null as StatuslineUsage | null)
 const identity = atom({ plugin: 'chrysaki-statusline', key: 'identity' } as const, null as StatuslineIdentity | null)
@@ -21,10 +25,7 @@ const shownCache = atom({ plugin: 'chrysaki-statusline', key: 'cacheView' } as c
 const cacheAlert = atom({ plugin: 'chrysaki-statusline', key: 'cacheAlert' } as const, {} as CacheAlert)
 const hasGitCommand = atom({ plugin: 'chrysaki-statusline', key: 'hasGitCommand' } as const, false)
 const handoff = atom({ plugin: 'chrysaki-statusline', key: 'handoff' } as const, null as PendingHandoff | null)
-
-// The file name the context-handoff skill writes: YYYY-MM-DD-HHhMM-{slug}.md
-// under a handoffs directory. Overflow files do not match.
-export const HANDOFF_FILE = /\/handoffs\/\d{4}-\d{2}-\d{2}-\d{2}h\d{2}-[^/]+\.md$/
+const resume = atom({ plugin: 'chrysaki-statusline', key: 'resume' } as const, null as string | null)
 
 // A pending handoff gives up after this many main-thread turns end with no
 // handoff file found.
@@ -74,12 +75,45 @@ async function refreshRemote($: EngineInterface, isForced: boolean): Promise<voi
   await update($, remote, () => r)
 }
 
-async function refreshUsage($: EngineInterface): Promise<void> {
+// The figures at session start: the session's own, with the last saved
+// rate-limit reading filling the windows a fresh session has not read yet.
+// After this, session.measure pushes every change, so nothing polls usage.
+// It runs after the identity read, which names the account.
+async function seedUsage($: EngineInterface): Promise<void> {
   try {
-    const u = await $.session.usage()
-    await update($, usage, () => usageFrom(u))
-  } catch {
-    // The band keeps its last figures until the next session.measure.
+    const email = (await read($, identity))?.email ?? 'unknown'
+    const [u, raw, now] = await Promise.all([$.session.usage(), $.store.get(limitsKey(email)).catch(() => undefined), $.clock.now()])
+    const fresh = usageFrom(u)
+    // A hot reload keeps the state. Its windows stand in for any the
+    // engine has not read yet.
+    await update($, usage, prev => withSaved({
+      ...fresh,
+      fiveHour: fresh.fiveHour ?? prev?.fiveHour,
+      sevenDay: fresh.sevenDay ?? prev?.sevenDay,
+      startedAt: fresh.startedAt ?? prev?.startedAt,
+    }, parseSaved(raw), now))
+  } catch (error) {
+    logFailure($, error)
+  }
+}
+
+// Shows a window as reset once its reset time passes. No request is needed.
+async function rollLimits($: EngineInterface): Promise<void> {
+  const [u, now] = await Promise.all([read($, usage), $.clock.now()])
+  if (u === null) return
+  const rolled = rollUsage(u, now)
+  if (rolled !== u) await update($, usage, () => rolled)
+}
+
+// Saves a fresh rate-limit reading for the next session to start from.
+async function saveLimits($: EngineInterface, u: StatuslineUsage): Promise<void> {
+  const saved = toSaved(u, await $.clock.now())
+  if (saved === null) return
+  try {
+    const email = (await read($, identity))?.email ?? 'unknown'
+    await $.store.set(limitsKey(email), saved)
+  } catch (error) {
+    logFailure($, error)
   }
 }
 
@@ -87,13 +121,12 @@ function logFailure($: EngineInterface, error: unknown): void {
   $.ui.log(`chrysaki-statusline: refresh failed: ${error instanceof Error ? error.message : String(error)}`, { to: 'debug' })
 }
 
-// The fast refresh: identity, git, inbox and usage. Hooks await it, because
-// $ belongs to the dispatch that holds it. A failure goes to the debug log
-// and the band keeps its last values.
+// The fast refresh: identity, git and inbox. Hooks await it, because $
+// belongs to the dispatch that holds it. A failure goes to the debug log and
+// the band keeps its last values.
 async function refreshFast($: EngineInterface): Promise<void> {
   try {
     await refreshLocal($)
-    await refreshUsage($)
   } catch (error) {
     logFailure($, error)
   }
@@ -281,6 +314,38 @@ async function finishHandoff($: EngineInterface): Promise<void> {
   $.ui.toast(copied.isCopied ? `Copied the handoff path: ${path}` : `The handoff is at ${path}. Copy is not available here.`, { timeoutMs: 10000 })
 }
 
+// The resume key's source: a handoff path on the clipboard. The plugin API
+// has no clipboard read, so wl-paste reads it. Only a session with no context
+// yet looks, so the read stops after the first turn.
+async function refreshResume($: EngineInterface): Promise<void> {
+  const hasContext = (await read($, usage))?.ctxPercent !== undefined
+  let path: string | null = null
+  if (!hasContext) {
+    try {
+      const r = await $.process.run(['wl-paste', '--no-newline', '--type', 'text/plain'], { timeoutMs: 2000 })
+      const found = r.exitCode === 0 ? handoffPathFrom(r.stdout, (await $.env.get('HOME')) ?? '') : null
+      path = found !== null && (await $.fs.exists(found)) ? found : null
+    } catch (error) {
+      logFailure($, error)
+    }
+  }
+  if (path !== (await read($, resume))) await update($, resume, () => path)
+}
+
+// The resume key: puts /context-resume and the path in an empty prompt box.
+// It never writes over a draft the person typed.
+async function pressResume($: EngineInterface): Promise<void> {
+  const path = await read($, resume)
+  if (path === null) return
+  const box = await $.prompt.read()
+  if (box.text.trim() !== '') {
+    $.ui.toast('The prompt holds a draft. Clear it, then press resume again.')
+    return
+  }
+  const filled = await $.prompt.fill({ text: resumeCommand(path), mode: 'replace' })
+  if (!filled.isFilled) $.ui.toast(`The prompt did not take the command. Type: ${resumeCommand(path)}`, { timeoutMs: 10000 })
+}
+
 // The ctx button: the largest used categories, as /context lists them.
 async function toastBreakdown($: EngineInterface): Promise<void> {
   try {
@@ -316,21 +381,32 @@ export const register: Register = (on, options) => {
     const done = await next(e)
     // The bash statusline reads this and prints nothing while the mod draws.
     await $.env.set('CHRYSAKI_STATUSLINE_MOD', '1')
-    $.clock.after(0, () => { void refreshSlow($, true) })
+    $.clock.after(0, () => {
+      void refreshFast($)
+        .then(() => seedUsage($))
+        .then(() => refreshRemote($, true))
+        .catch(error => logFailure($, error))
+    })
     $.clock.every(REFRESH_MS, () => {
       const isForced = isRemoteDue
       isRemoteDue = false
+      void rollLimits($)
       void refreshSlow($, isForced).then(() => refreshGitCommand($))
     })
     $.clock.after(0, () => { void refreshGitCommand($).then(() => tickCache($, cacheConfig, isTurnRunning)) })
     $.clock.every(CACHE_TICK_MS, () => { void tickCache($, cacheConfig, isTurnRunning) })
+    // The resume key looks at the clipboard on the same clock as the cache.
+    $.clock.after(0, () => { void refreshResume($) })
+    $.clock.every(CACHE_TICK_MS, () => { void refreshResume($) })
     if (isAnimated) $.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })
     return done
   })
 
   // The engine pushes context, rate-limit and cost figures here after each turn.
   on('session.measure', async ($, e, next) => {
-    await update($, usage, prev => usageFromMeasure(e, prev))
+    const now = await $.clock.now()
+    await update($, usage, prev => rollUsage(usageFromMeasure(e, prev), now))
+    if (e.changed.includes('rateLimits')) await saveLimits($, usageFrom(e))
     return next(e)
   })
 
@@ -354,6 +430,7 @@ export const register: Register = (on, options) => {
       await finishHandoff($)
       await refreshFast($)
       await tickCache($, cacheConfig, isTurnRunning)
+      await refreshResume($)
     }
     return done
   })
@@ -396,7 +473,9 @@ export const register: Register = (on, options) => {
       read($, usage), read($, identity), read($, git), read($, remote), read($, inbox),
       isAnimated ? read($, phase) : Promise.resolve(0), $.clock.now(), $.env.get('HOME'),
     ])
-    const [c, cv, hasGit, busyHandoff] = await Promise.all([read($, cache), read($, shownCache), read($, hasGitCommand), read($, handoff)])
+    const [c, cv, hasGit, busyHandoff, resumePath] = await Promise.all([
+      read($, cache), read($, shownCache), read($, hasGitCommand), read($, handoff), read($, resume),
+    ])
     const band = drawBand(table, Raster, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       columns: e.props.bodyColumns, barStyle, usdToSgd,
@@ -405,6 +484,8 @@ export const register: Register = (on, options) => {
       onGit: () => { void openGitPane($) },
       isHandingOff: busyHandoff !== null,
       onHandoff: () => { void pressHandoff($, e.surface) },
+      resumePath,
+      onResume: () => { void pressResume($) },
     })
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band

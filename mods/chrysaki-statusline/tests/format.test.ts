@@ -19,12 +19,12 @@ describe('thresholds match statusline-command.sh', () => {
   })
 
   test('context colour, marker and handoff', async () => {
-    expect(ctxColor(36, 72000)).toBe(ROLE.teal)
-    expect(ctxColor(50, 100000)).toBe(ROLE.orange)
-    expect(ctxColor(40, 128000)).toBe(ROLE.error)
-    expect(ctxMarker(36, 72000)).toBe('▰')
-    expect(ctxMarker(55, 90000)).toBe('▱')
-    expect(ctxMarker(55, 130000)).toBe('◆')
+    expect(ctxColor(60, 120000)).toBe(ROLE.teal)
+    expect(ctxColor(25, 250000)).toBe(ROLE.warn)
+    expect(ctxColor(50, 500000)).toBe(ROLE.error)
+    expect(ctxMarker(60, 120000)).toBe('▰')
+    expect(ctxMarker(25, 250000)).toBe('▱')
+    expect(ctxMarker(50, 500000)).toBe('◆')
     expect(isHandoffDue(99999)).toBe(false)
     expect(isHandoffDue(100000)).toBe(true)
     expect(marker(80, 50, 75)).toBe('◆')
