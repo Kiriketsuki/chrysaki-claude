@@ -51,8 +51,9 @@ export const NARROW_COLUMNS = 100
 // full-width rows under the two bar columns.
 export const WIDE_COLUMNS = 150
 // The engine draws its collapse mark `[-]` over the last cells of the band's
-// first row. The band stops short of it.
-const RESERVE = 4
+// first row. That row is the blank top margin, so no row of content needs to
+// stop short of the mark.
+const RESERVE = 0
 const RULE = '─'
 // The theme key of the prompt's rules. Text colours take a theme key.
 const RULE_COLOR = 'promptBorder'
