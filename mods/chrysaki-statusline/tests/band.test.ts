@@ -263,12 +263,13 @@ test('the ledger opens each row with a jewel badge and draws no rule', async ($,
   await $.tool.call({ tool: 'Bash', command: 'git status' })
   for (const columns of [238, 160]) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
-    // Emerald for usage, Amethyst for the cache, Teal for the diff.
+    // Emerald for 5h, Amethyst Lt for the cache, Rhodolite for the diff.
     expect((await ui.find({ type: 'Text', text: /▰ 5h|▱ 5h|◆ 5h/ }))?.props.backgroundColor).toBe('#14664e')
-    expect((await ui.find({ type: 'Text', text: /⧗ cache/ }))?.props.backgroundColor).toBe('#3a2068')
-    expect((await ui.find({ type: 'Text', text: /± diff/ }))?.props.backgroundColor).toBe('#197278')
+    expect((await ui.find({ type: 'Text', text: /⧗ cache/ }))?.props.backgroundColor).toBe('#583090')
+    expect((await ui.find({ type: 'Text', text: /± diff/ }))?.props.backgroundColor).toBe('#9e2d6e')
     // No dotted, dashed or box rule anywhere in the ledger.
     expect(await ui.find({ type: 'Text', text: /[┊│┐└┘]/ })).toBeUndefined()
     await ui.unmount()
   }
 })
+

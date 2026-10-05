@@ -1,5 +1,7 @@
 // The ledger under the header: rows of cells on one fixed grid. Each cell
 // opens with a filled jewel badge that names it and ends in a powerline edge.
+// Each badge takes its own jewel: 5h Emerald, 7d Teal, ctx Royal Blue Lt,
+// cache Amethyst Lt, git and diff Rhodolite.
 // The badges are the only fills and the only separators. Cell bodies have no
 // ground, so the window shows through between the figures. No I/O happens here.
 
@@ -132,7 +134,7 @@ function contextWidth(bar: number): number {
 function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | undefined, bar: number): RenderElement {
   const { Text } = T
   const pct = w?.percent ?? 0
-  const head = badge(T, { key: label, text: `${marker(pct, 50, 75)} ${label}`, bg: CORE.emerald, width: 6 })
+  const head = badge(T, { key: label, text: `${marker(pct, 50, 75)} ${label}`, bg: label === '5h' ? CORE.emerald : CORE.teal, width: 6 })
   if (w === undefined) return cell(T, `cell-${label}`, usageWidth(bar), [...head, emptyBar(T, bar)])
   const b = zoneBar(T, d, pct, USAGE_ZONES, bar)
   const reset = untilReset(w.resetsAt, d.now)
@@ -165,7 +167,7 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
   const { Text } = T
   const u = d.usage
   const tokens = u?.ctxTokens
-  const head = badge(T, { key: 'ctx-detail', text: '', bg: CORE.blue, width: 9, press: { label: `${marker(u?.ctxPercent ?? 0, 50, 75)} ctx`, onPress: d.onContext } })
+  const head = badge(T, { key: 'ctx-detail', text: '', bg: CORE.blueLight, width: 9, press: { label: `${marker(u?.ctxPercent ?? 0, 50, 75)} ctx`, onPress: d.onContext } })
   if (u?.ctxPercent === undefined) {
     const name = d.resumePath === null ? 'no context yet' : d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
     return cell(T, 'cell-ctx', contextWidth(bar), [
@@ -192,7 +194,7 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
 const CACHE_STATE = { warm: '● warm', warning: '◐ cooling', cold: '○ cold' } as const
 
 function cacheCell(T: Table, d: BandData, bar: number): RenderElement {
-  const head = badge(T, { key: 'cache', text: '⧗ cache', bg: CORE.amethyst, width: 9 })
+  const head = badge(T, { key: 'cache', text: '⧗ cache', bg: CORE.amethystLight, width: 9 })
   const c = d.cache
   const v = d.cacheView
   if (c === null || v === null) {
@@ -231,9 +233,9 @@ function gitCells(T: Table, d: BandData, width: number): [RenderElement, RenderE
   const { Text } = T
   const g = d.git
   const key = d.hasGitCommand
-    ? badge(T, { key: 'git-pane', text: '', bg: CORE.teal, width: 8, press: { label: 'git', hotkey: 'g', onPress: d.onGit } })
-    : badge(T, { key: 'git', text: '⎇ git', bg: CORE.teal, width: 8 })
-  const diff = badge(T, { key: 'diff', text: '± diff', bg: CORE.teal, width: 8 })
+    ? badge(T, { key: 'git-pane', text: '', bg: CORE.rhodolite, width: 8, press: { label: 'git', hotkey: 'g', onPress: d.onGit } })
+    : badge(T, { key: 'git', text: '⎇ git', bg: CORE.rhodolite, width: 8 })
+  const diff = badge(T, { key: 'diff', text: '± diff', bg: CORE.rhodolite, width: 8 })
   const body = width - 10
   if (g === null) {
     return [cell(T, 'git-a', width, [...key, <Text color={ROLE.muted}>no git repository</Text>]), cell(T, 'git-b', width, [...diff])]
@@ -302,13 +304,11 @@ export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[
   const [gitA, gitB] = gitCells(T, d, gitWidth)
   const row = (key: string, children: RenderElement[]) => <Box key={key} paddingLeft={1}>{children}</Box>
   const bars = left.map(([a, b]) => [a as RenderElement, spaces(T, CELL_GAP), b as RenderElement])
-  const rows = isWide
-    ? [
+  if (isWide) {
+    return [
       row('row-0', [...(bars[0] ?? []), spaces(T, CELL_GAP), gitA]),
       row('row-1', [...(bars[1] ?? []), spaces(T, CELL_GAP), gitB]),
     ]
-    : [row('row-0', bars[0] ?? []), row('row-1', bars[1] ?? []), row('row-2', [gitA]), row('row-3', [gitB])]
-  // One empty row between two ledger rows, so the badges stand apart and
-  // match the spacing above and below the ledger.
-  return rows.flatMap((r, i) => (i === 0 ? [r] : [<Box key={`row-gap-${i}`} height={1} />, r]))
+  }
+  return [row('row-0', bars[0] ?? []), row('row-1', bars[1] ?? []), row('row-2', [gitA]), row('row-3', [gitB])]
 }

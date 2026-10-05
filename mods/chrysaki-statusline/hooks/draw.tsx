@@ -147,17 +147,18 @@ function frameColor(d: BandData): string {
 // --- Header --------------------------------------------------------------------
 
 // The header: the drawer chevron, the brand run (model on Emerald, version on
-// Teal, folder on Royal Blue), a rule in the prompt's colour, then the mirror
-// run with cost on Royal Blue, the session clock on Teal, the inbox on Blonde
-// and the account on Emerald, or Topaz for a work account.
+// Royal Blue Lt, folder on Amethyst Lt), a rule in the prompt's colour, then
+// the mirror run with cost on Amethyst Lt, the session clock on Royal Blue Lt,
+// the inbox on Blonde and the account on Emerald, or Topaz for a work account.
+// Neighbours take hues far apart, so each powerline edge shows.
 function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
   const { Box, Text, Button } = T
   const id = d.identity
   const u = d.usage
   const left: Seg[] = [
     { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt },
-    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.teal, fg: ROLE.text }] : []),
-    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.blue, fg: ROLE.text, bold: true }] : []),
+    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.blueLight, fg: ROLE.text }] : []),
+    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true }] : []),
   ]
   const email = id?.email ?? ''
   // The account list knows the work accounts. The config folder is the guess
@@ -171,8 +172,8 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     press: { key: 'account', label: email, hotkey: 'a', onPress: d.onAccounts },
   }
   const right: Seg[] = [
-    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.blue, fg: ROLE.blondeLt, bold: true }]),
-    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.teal, fg: ROLE.text }]),
+    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),
+    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text }]),
     ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
