@@ -3,7 +3,7 @@
 
 import { ROLE } from './palette'
 
-export type BarStyle = 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
+export type BarStyle = 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
 
 // 5h usage: Emerald Lt, Blonde from 50, Ruby from 75.
 export function fiveHourColor(pct: number): string {
@@ -20,9 +20,14 @@ export function sevenDayColor(pct: number): string {
 }
 
 // ctx: Teal, orange from 50 percent, Ruby from 128k tokens absolute.
-export function ctxColor(pct: number, tokens: number | undefined): string {
-  if (tokens !== undefined && tokens >= 128000) return ROLE.error
-  if (pct >= 50) return ROLE.orange
+// The ctx thresholds go by tokens, not by percent, so a 1M window and a 200k
+// window warn at the same size: amber from 250k, red from 500k.
+export const CTX_AMBER_TOKENS = 250000
+export const CTX_RED_TOKENS = 500000
+
+export function ctxColor(_pct: number, tokens: number | undefined): string {
+  if (tokens !== undefined && tokens >= CTX_RED_TOKENS) return ROLE.error
+  if (tokens !== undefined && tokens >= CTX_AMBER_TOKENS) return ROLE.warn
   return ROLE.teal
 }
 
@@ -33,9 +38,9 @@ export function marker(pct: number, warnAt: number, critAt: number): string {
   return '▰'
 }
 
-export function ctxMarker(pct: number, tokens: number | undefined): string {
-  if (tokens !== undefined && tokens >= 128000) return '◆'
-  if (pct >= 50) return '▱'
+export function ctxMarker(_pct: number, tokens: number | undefined): string {
+  if (tokens !== undefined && tokens >= CTX_RED_TOKENS) return '◆'
+  if (tokens !== undefined && tokens >= CTX_AMBER_TOKENS) return '▱'
   return '▰'
 }
 
@@ -61,17 +66,19 @@ export function untilReset(resetsAt: number | undefined, now: number): string {
 export type BarCell = { glyph: string; isFilled: boolean }
 
 const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
+  line: ['━', '─'],
   hex: ['⬢', '⬡'],
   diamond: ['◆', '◇'],
   circle: ['●', '○'],
   block: ['█', '░'],
 }
 
-// progress_bar: eight cells, round(pct * 8 / 100) filled. The wave style
+// progress_bar: eight cells by default, round(pct * length / 100) filled. The
+// band stretches a bar to the width of its cell with `length`. The wave style
 // alternates up and down triangles and scrolls by `shift` (0 to 3).
-export function barCells(pct: number, style: BarStyle, shift: number): BarCell[] {
-  const filled = Math.max(0, Math.min(8, Math.floor((pct * 8 + 50) / 100)))
-  return Array.from({ length: 8 }, (_, i) => {
+export function barCells(pct: number, style: BarStyle, shift: number, length = 8): BarCell[] {
+  const filled = Math.max(0, Math.min(length, Math.floor((pct * length + 50) / 100)))
+  return Array.from({ length }, (_, i) => {
     const isFilled = i < filled
     if (style === 'wave') {
       const isUp = (i + shift) % 4 % 2 === 0
@@ -113,8 +120,9 @@ export function sessionClock(ms: number): string {
   const h = Math.floor(secs / 3600)
   const m = Math.floor((secs % 3600) / 60)
   const s = secs % 60
-  if (h > 0) return `${h}hr ${m}m ${s}s`
-  if (m > 0) return `${m}m ${s}s`
+  // Seconds only matter in the first hour. Past it they are noise.
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`
   return `${s}s`
 }
 
@@ -152,4 +160,14 @@ export function inboxDepth(scratch: string): number {
 export function rightEdge(i: number, n: number): string {
   if (i === n - 1) return ''
   return i % 2 === 0 ? '' : ''
+}
+
+// The mirror of rightEdge, for a run that reads right to left: the glyph
+// before segment j of n. It reflects the left run's edge for the segment in
+// the mirrored place, so the right end of the header mirrors its left end.
+const MIRROR: Record<string, string> = { '\ue0b0': '\ue0b2', '\ue0bc': '\ue0be', '\ue0b8': '\ue0ba' }
+
+export function leftEdge(j: number, n: number): string {
+  const edge = rightEdge(n - 1 - j, n)
+  return MIRROR[edge] ?? edge
 }

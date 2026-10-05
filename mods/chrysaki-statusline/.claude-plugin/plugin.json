@@ -2,28 +2,69 @@
   "name": "chrysaki-statusline",
   "version": "0.1.0",
   "description": "The Chrysaki four-line statusline as a band above the prompt",
-  "author": { "name": "Kiriketsuki" },
+  "author": {
+    "name": "Kiriketsuki"
+  },
   "types": "./types/index.d.ts",
   "userConfig": {
     "barStyle": {
       "type": "string",
       "title": "Bar style",
-      "description": "Progress bar glyphs, as CHRYSAKI_BAR_STYLE",
-      "default": "wave",
-      "options": ["wave", "hex", "diamond", "circle", "block"]
+      "description": "Progress bar glyphs. line draws filled and empty rules in the prompt colour",
+      "default": "line",
+      "options": [
+        "line",
+        "wave",
+        "hex",
+        "diamond",
+        "circle",
+        "block"
+      ]
     },
     "animate": {
       "type": "string",
       "title": "Animation",
-      "description": "Scroll the wave bars and the brand gradient every 2 seconds",
-      "default": "on",
-      "options": ["on", "off"]
+      "description": "Scroll the wave bars and pulse the badge every 2 seconds",
+      "default": "off",
+      "options": [
+        "on",
+        "off"
+      ]
     },
     "usdToSgd": {
       "type": "string",
       "title": "USD to SGD rate",
       "description": "Multiplier for the cost segment, as CHRYSAKI_USD_TO_SGD",
       "default": "1.35"
+    },
+    "cacheWarnLead": {
+      "type": "string",
+      "title": "Cache warning lead",
+      "description": "Seconds before the prompt cache expires to warn. auto is 60 for a 5m TTL and 300 for 1h",
+      "default": "auto",
+      "options": [
+        "auto",
+        "60",
+        "120",
+        "300",
+        "600"
+      ]
+    },
+    "cacheMinTokens": {
+      "type": "string",
+      "title": "Cache warning minimum",
+      "description": "Warn only when a cold cache re-writes at least this many tokens",
+      "default": "20000"
+    },
+    "desktopNotify": {
+      "type": "string",
+      "title": "Desktop notifications",
+      "description": "Send cache alerts through notify-send as well as a toast",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
     }
   }
 }

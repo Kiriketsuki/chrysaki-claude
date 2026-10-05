@@ -29,13 +29,30 @@ export type StatuslineGit = {
   branch: string
   hash: string
   ahead: number
+  behind: number
   staged: number
   unstaged: number
+  untracked: number
+  // The upstream branch, for example origin/main, or empty without one.
+  upstream: string
+  // The subject and relative age of the commit at HEAD.
+  subject: string
+  age: string
   insertions: number
   deletions: number
   worktree: string
   // owner/repo from the origin remote, or empty when it is not on GitHub.
   repoPath: string
+}
+
+// A /context-handoff run the mod watches, to copy the file path it writes.
+export type PendingHandoff = {
+  since: number
+  // Where the copy goes: the surface of the press, or the session's surface.
+  surface: 'terminal' | 'desktop' | 'mobile' | 'vscode' | null
+  path: string | null
+  // Main-thread turns that ended with no handoff file found.
+  misses: number
 }
 
 export type StatuslineRemote = {
@@ -46,6 +63,27 @@ export type StatuslineRemote = {
   fetchedAt: number
 }
 
+export type StatuslineCache = {
+  // statusline: read from the statusLine stdin JSON on disk. inferred: timed
+  // from the main thread's requests.
+  source: 'statusline' | 'inferred'
+  isWarm: boolean
+  ttl: '5m' | '1h'
+  // Epoch milliseconds. Absent when the cache holds nothing.
+  expiresAt?: number
+  hitRatio?: number
+  misses?: number
+  lastMissCause?: string
+  recacheTokens?: number
+}
+
+export type CacheTone = 'warm' | 'warning' | 'cold'
+
+export type CacheView = { label: string; tone: CacheTone }
+
+// The expiry times already warned for, so each period alerts once.
+export type CacheAlert = { warnedFor?: number; coldFor?: number }
+
 declare module 'claude-code' {
   interface PluginState {
     'chrysaki-statusline': {
@@ -55,6 +93,13 @@ declare module 'claude-code' {
       remote: StatuslineRemote | null
       inbox: number
       phase: number
+      cache: StatuslineCache | null
+      cacheView: CacheView | null
+      cacheAlert: CacheAlert
+      hasGitCommand: boolean
+      handoff: PendingHandoff | null
+      // A handoff path on the clipboard, shown as the resume key in a fresh session.
+      resume: string | null
     }
   }
 }

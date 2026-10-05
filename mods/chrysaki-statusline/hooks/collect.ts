@@ -55,8 +55,11 @@ export function usageFrom(u: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost
   }
 }
 
+// A measurement with no reading for a window keeps the previous one, so a
+// window seeded from the store survives the first context-only measurement.
 export function usageFromMeasure(e: SessionMeasureInput, previous: StatuslineUsage | null): StatuslineUsage {
-  return { ...usageFrom(e), startedAt: previous?.startedAt }
+  const u = usageFrom(e)
+  return { ...u, fiveHour: u.fiveHour ?? previous?.fiveHour, sevenDay: u.sevenDay ?? previous?.sevenDay, startedAt: previous?.startedAt }
 }
 
 export async function readIdentity(host: Host): Promise<StatuslineIdentity> {
@@ -83,16 +86,23 @@ export async function readIdentity(host: Host): Promise<StatuslineIdentity> {
 
 // One `git status --porcelain=v2 --branch` gives the branch, the hash, the
 // ahead count and the staged and unstaged file counts in one run.
-export function parseStatus(text: string): Omit<StatuslineGit, 'insertions' | 'deletions' | 'worktree' | 'repoPath'> {
+export function parseStatus(text: string): Omit<StatuslineGit, 'insertions' | 'deletions' | 'worktree' | 'repoPath' | 'subject' | 'age'> {
   let branch = ''
   let hash = ''
   let ahead = 0
+  let behind = 0
   let staged = 0
   let unstaged = 0
+  let untracked = 0
+  let upstream = ''
   for (const line of text.split('\n')) {
     if (line.startsWith('# branch.oid ')) hash = line.slice(13, 20)
     else if (line.startsWith('# branch.head ')) branch = line.slice(14)
-    else if (line.startsWith('# branch.ab ')) ahead = Number(/\+(\d+)/.exec(line)?.[1] ?? 0)
+    else if (line.startsWith('# branch.upstream ')) upstream = line.slice(18)
+    else if (line.startsWith('# branch.ab ')) {
+      ahead = Number(/\+(\d+)/.exec(line)?.[1] ?? 0)
+      behind = Number(/-(\d+)/.exec(line)?.[1] ?? 0)
+    } else if (line.startsWith('? ')) untracked += 1
     else if (/^[12u] /.test(line)) {
       const xy = line.slice(2, 4)
       if (xy[0] !== '.') staged += 1
@@ -100,18 +110,20 @@ export function parseStatus(text: string): Omit<StatuslineGit, 'insertions' | 'd
     }
   }
   if (branch === '(detached)' || branch === '') branch = hash
-  return { branch, hash, ahead, staged, unstaged }
+  return { branch, hash, ahead, behind, staged, unstaged, untracked, upstream }
 }
 
 export async function readGit(host: Host, cwd: string): Promise<StatuslineGit | null> {
   const status = await out(host, ['git', 'status', '--porcelain=v2', '--branch'], cwd)
   if (status === null) return null
-  const [unstagedStat, stagedStat, gitDir, origin] = await Promise.all([
+  const [unstagedStat, stagedStat, gitDir, origin, head] = await Promise.all([
     out(host, ['git', 'diff', '--shortstat'], cwd),
     out(host, ['git', 'diff', '--cached', '--shortstat'], cwd),
     out(host, ['git', 'rev-parse', '--git-dir'], cwd),
     out(host, ['git', 'remote', 'get-url', 'origin'], cwd),
+    out(host, ['git', 'log', '-1', '--format=%s%x1f%cr'], cwd),
   ])
+  const [subject = '', age = ''] = (head ?? '').trim().split('\x1f')
   const a = parseShortstat(unstagedStat ?? '')
   const b = parseShortstat(stagedStat ?? '')
   const dir = (gitDir ?? '').trim()
@@ -121,6 +133,8 @@ export async function readGit(host: Host, cwd: string): Promise<StatuslineGit | 
     deletions: a.deletions + b.deletions,
     worktree: dir.includes('/worktrees/') ? dir.split('/').pop() ?? '' : '',
     repoPath: repoPathFromRemote(origin ?? ''),
+    subject,
+    age,
   }
 }
 

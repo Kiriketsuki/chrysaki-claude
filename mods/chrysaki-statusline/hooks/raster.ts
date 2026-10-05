@@ -93,9 +93,9 @@ export function loopGradient(stops: readonly string[], t: number): number {
 
 // The brand bridge: a row of heavy rules, its colour flowing along the loop
 // Emerald, Royal Blue, Amethyst. `phase` moves it one step per tick.
-export function bridgeCells(columns: number, stops: readonly string[], phase: number): string {
+export function bridgeCells(columns: number, stops: readonly string[], phase: number, codePoint = 0x2501): string {
   const cells = Array.from({ length: columns }, (_, i) => ({
-    codePoint: 0x2501,
+    codePoint,
     fg: loopGradient(stops, i / Math.max(24, columns) - phase / 16),
     bg: DEFAULT_COLOR,
   }))

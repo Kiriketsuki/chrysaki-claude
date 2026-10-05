@@ -19,12 +19,12 @@ describe('thresholds match statusline-command.sh', () => {
   })
 
   test('context colour, marker and handoff', async () => {
-    expect(ctxColor(36, 72000)).toBe(ROLE.teal)
-    expect(ctxColor(50, 100000)).toBe(ROLE.orange)
-    expect(ctxColor(40, 128000)).toBe(ROLE.error)
-    expect(ctxMarker(36, 72000)).toBe('▰')
-    expect(ctxMarker(55, 90000)).toBe('▱')
-    expect(ctxMarker(55, 130000)).toBe('◆')
+    expect(ctxColor(60, 120000)).toBe(ROLE.teal)
+    expect(ctxColor(25, 250000)).toBe(ROLE.warn)
+    expect(ctxColor(50, 500000)).toBe(ROLE.error)
+    expect(ctxMarker(60, 120000)).toBe('▰')
+    expect(ctxMarker(25, 250000)).toBe('▱')
+    expect(ctxMarker(50, 500000)).toBe('◆')
     expect(isHandoffDue(99999)).toBe(false)
     expect(isHandoffDue(100000)).toBe(true)
     expect(marker(80, 50, 75)).toBe('◆')
@@ -65,7 +65,9 @@ describe('formats', () => {
       '1 M. N... 100644 100644 100644 a b hooks/a.ts', '1 .M N... 100644 100644 100644 a b hooks/b.ts',
       '1 MM N... 100644 100644 100644 a b hooks/c.ts', '? new.txt',
     ].join('\n')
-    expect(parseStatus(status)).toEqual({ branch: 'main', hash: '9f25299', ahead: 2, staged: 2, unstaged: 2 })
+    expect(parseStatus(status)).toEqual({
+      branch: 'main', hash: '9f25299', ahead: 2, behind: 0, staged: 2, unstaged: 2, untracked: 1, upstream: 'origin/main',
+    })
     expect(inboxDepth('# Scratch\n## Ramblings\n- a\n- b\n## Done\n- c')).toBe(2)
   })
 
