@@ -1,0 +1,25 @@
+{
+  "name": "Chrysaki",
+  "base": "dark",
+  "overrides": {
+    "promptBorder": "rgb(26,138,106)",
+    "promptBorderShimmer": "rgb(32,150,156)",
+    "bashBorder": "rgb(251,177,60)",
+    "claude": "rgb(251,177,60)",
+    "claudeShimmer": "rgb(252,201,106)",
+    "permission": "rgb(32,150,156)",
+    "permissionShimmer": "rgb(26,138,106)",
+    "planMode": "rgb(32,150,156)",
+    "autoAccept": "rgb(252,201,106)",
+    "autoAcceptShimmer": "rgb(251,177,60)",
+    "suggestion": "rgb(32,150,156)",
+    "text": "rgb(224,226,234)",
+    "subtle": "rgb(106,110,130)",
+    "inactive": "rgb(106,110,130)",
+    "success": "rgb(26,138,106)",
+    "error": "rgb(181,63,74)",
+    "warning": "rgb(251,177,60)",
+    "userMessageBackground": "rgb(37,40,54)",
+    "selectionBg": "rgb(46,49,66)"
+  }
+}

@@ -1,0 +1,10 @@
+#!/bin/sh
+# The BROWSER command the account switcher sets while /login runs. It opens
+# each URL in the Firefox profile folder that CHRYSAKI_LOGIN_PROFILE names.
+# Without that variable it opens the URL as Claude Code would by default.
+if [ -n "${CHRYSAKI_LOGIN_PROFILE:-}" ] && [ -d "$CHRYSAKI_LOGIN_PROFILE" ]; then
+	# Firefox 150 opens a URL in a selectable profile the same way. The exact
+	# path is the remoting key, so a running window of that profile takes it.
+	exec firefox --profile "$CHRYSAKI_LOGIN_PROFILE" -new-tab "$@"
+fi
+exec xdg-open "$@"

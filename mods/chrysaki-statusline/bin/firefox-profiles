@@ -1,0 +1,33 @@
+#!/bin/sh
+# Prints one "name<TAB>absolute path" line per Firefox user profile, in the
+# order of the Firefox profile switcher.
+#
+# Firefox keeps these profiles in a profile group database, which profiles.ini
+# names by StoreID. A running Firefox holds the database open, and recent rows
+# can sit in the WAL file, so the script reads a copy of all three files.
+set -eu
+ff_dir="${MOZ_PROFILES_DIR:-$HOME/.mozilla/firefox}"
+store_id="$(sed -n 's/^StoreID=//p' "$ff_dir/profiles.ini" | head -n 1)"
+if [ -z "$store_id" ]; then
+	echo "firefox-profiles: profiles.ini names no profile group" >&2
+	exit 2
+fi
+db="$ff_dir/Profile Groups/$store_id.sqlite"
+if [ ! -f "$db" ]; then
+	echo "firefox-profiles: $db does not exist" >&2
+	exit 2
+fi
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+for f in "$db" "$db-wal" "$db-shm"; do
+	if [ -f "$f" ]; then
+		cp "$f" "$tmp/"
+	fi
+done
+sqlite3 -separator "$(printf '\t')" "$tmp/$store_id.sqlite" 'SELECT name, path FROM Profiles ORDER BY id;' |
+	while IFS="$(printf '\t')" read -r name path; do
+		case "$path" in
+		/*) printf '%s\t%s\n' "$name" "$path" ;;
+		*) printf '%s\t%s\n' "$name" "$ff_dir/$path" ;;
+		esac
+	done

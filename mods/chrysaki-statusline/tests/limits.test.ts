@@ -60,7 +60,7 @@ test('a fresh session draws the last saved limits before its first response', as
   on('ui.render', { component: 'AbovePrompt' }, async (h$, e) => h$.ui.resolve(e).Box({ key: 'engine-band' }))
   await $.session.start({ cwd: '/home/k/repo', surface: 'terminal', isInteractive: true })
   await clock.advance(0)
-  expect(keys).toEqual(['limits:k@example.com'])
+  expect(keys.filter(k => k.startsWith('limits:'))).toEqual(['limits:k@example.com'])
   const props = { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 200, scroll: { offset: 0, bodyRows: 12 }, view: {} }
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props })
   expect(await ui.find({ type: 'Text', text: /^ ?42%$/ })).toBeDefined()

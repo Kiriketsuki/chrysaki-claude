@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
-import type { CacheAlert, CacheView, PendingHandoff, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheAlert, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, parseStatuslineCache } from './cache'
 import type { AlertAction } from './cache'
 import { readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
@@ -26,6 +27,18 @@ const cacheAlert = atom({ plugin: 'chrysaki-statusline', key: 'cacheAlert' } as 
 const hasGitCommand = atom({ plugin: 'chrysaki-statusline', key: 'hasGitCommand' } as const, false)
 const handoff = atom({ plugin: 'chrysaki-statusline', key: 'handoff' } as const, null as PendingHandoff | null)
 const resume = atom({ plugin: 'chrysaki-statusline', key: 'resume' } as const, null as string | null)
+const accounts = atom({ plugin: 'chrysaki-statusline', key: 'accounts' } as const, [] as StatuslineAccount[])
+const profiles = atom({ plugin: 'chrysaki-statusline', key: 'profiles' } as const, [] as FirefoxProfile[])
+const accountMenu = atom({ plugin: 'chrysaki-statusline', key: 'accountMenu' } as const, null as AccountMenu | null)
+const login = atom({ plugin: 'chrysaki-statusline', key: 'login' } as const, null as PendingLogin | null)
+const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as const, false)
+
+// The $.store key that keeps the drawer open or closed across sessions.
+const HINT_OPEN_KEY = 'hintOpen'
+
+// A login the switcher started gives BROWSER back after this long, even when
+// the account never changed.
+const LOGIN_WINDOW_MS = 600000
 
 // A pending handoff gives up after this many main-thread turns end with no
 // handoff file found.
@@ -127,6 +140,7 @@ function logFailure($: EngineInterface, error: unknown): void {
 async function refreshFast($: EngineInterface): Promise<void> {
   try {
     await refreshLocal($)
+    await checkLogin($)
   } catch (error) {
     logFailure($, error)
   }
@@ -346,6 +360,160 @@ async function pressResume($: EngineInterface): Promise<void> {
   if (!filled.isFilled) $.ui.toast(`The prompt did not take the command. Type: ${resumeCommand(path)}`, { timeoutMs: 10000 })
 }
 
+// --- Account switcher -----------------------------------------------------------
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function loadAccounts($: EngineInterface): Promise<void> {
+  const raw = await $.store.get(ACCOUNTS_KEY).catch(() => undefined)
+  const list = parseAccounts(raw) ?? [...SEED_ACCOUNTS]
+  await update($, accounts, () => list)
+}
+
+async function saveAccounts($: EngineInterface, list: StatuslineAccount[]): Promise<void> {
+  await update($, accounts, () => list)
+  try {
+    await $.store.set(ACCOUNTS_KEY, list)
+  } catch (error) {
+    $.ui.toast(`The account list did not save: ${message(error)}`)
+  }
+}
+
+// The Firefox user profiles, from bin/firefox-profiles.
+async function readProfiles($: EngineInterface): Promise<FirefoxProfile[]> {
+  const r = await $.process.run([`${$.plugin.root}/bin/firefox-profiles`], { timeoutMs: 5000 })
+  if (r.exitCode !== 0) throw new Error(r.stderr.trim() || `exit ${r.exitCode}`)
+  return parseProfiles(r.stdout)
+}
+
+// Opens the dropdown, or closes it when it is open. Each open reads the
+// Firefox profiles again, so a profile made since then shows up.
+async function toggleAccounts($: EngineInterface): Promise<void> {
+  if ((await read($, accountMenu)) !== null) {
+    await update($, accountMenu, () => null)
+    return
+  }
+  await update($, accountMenu, () => ({ mode: 'pick', draftEmail: '', draftProfile: '' }))
+  try {
+    const list = await readProfiles($)
+    await update($, profiles, () => list)
+    const current = await read($, accounts)
+    const resolved = resolvePaths(current, list)
+    if (JSON.stringify(resolved) !== JSON.stringify(current)) await saveAccounts($, resolved)
+  } catch (error) {
+    $.ui.toast(`The Firefox profile list failed: ${message(error)}`)
+  }
+}
+
+async function setMenu($: EngineInterface, change: (m: AccountMenu) => AccountMenu): Promise<void> {
+  await update($, accountMenu, m => (m === null ? null : change(m)))
+}
+
+// Gives BROWSER back and clears the profile the login used.
+async function endLogin($: EngineInterface): Promise<void> {
+  const p = await read($, login)
+  if (p === null) return
+  await $.env.set('BROWSER', p.prevBrowser ?? undefined)
+  await $.env.set('CHRYSAKI_LOGIN_PROFILE', undefined)
+  await update($, login, () => null)
+}
+
+// Ends a pending login once the account changed, or once the window lapsed.
+async function checkLogin($: EngineInterface): Promise<void> {
+  const p = await read($, login)
+  if (p === null) return
+  const [id, now] = await Promise.all([read($, identity), $.clock.now()])
+  if (id?.email.toLowerCase() === p.email) {
+    await endLogin($)
+    $.ui.toast(`Signed in as ${p.email}.`)
+    return
+  }
+  if (now - p.since > LOGIN_WINDOW_MS) await endLogin($)
+}
+
+// Switches to an account: BROWSER points at bin/open-in-profile with the
+// account's Firefox profile, then /login runs. The OAuth page opens in the
+// profile that holds the account's claude.ai session.
+async function switchAccount($: EngineInterface, email: string): Promise<void> {
+  const a = (await read($, accounts)).find(x => x.email === email)
+  await update($, accountMenu, () => null)
+  if (a === undefined) return
+  if ((await read($, identity))?.email.toLowerCase() === a.email) {
+    $.ui.toast(`You are signed in as ${a.email} already.`)
+    return
+  }
+  if (a.path === '' || !(await $.fs.exists(a.path))) {
+    $.ui.toast(`No Firefox profile folder is set for ${a.email}. Add the account again and pick its profile.`, { timeoutMs: 8000 })
+    return
+  }
+  const [prev, now, pending] = await Promise.all([$.env.get('BROWSER'), $.clock.now(), read($, login)])
+  // A second switch during a pending login keeps the first saved value.
+  const prevBrowser = pending !== null ? pending.prevBrowser : prev ?? null
+  await $.env.set('CHRYSAKI_LOGIN_PROFILE', a.path)
+  await $.env.set('BROWSER', `${$.plugin.root}/bin/open-in-profile`)
+  await update($, login, () => ({ email: a.email, since: now, prevBrowser }))
+  $.ui.toast(`Signing in as ${a.email}. The login page opens in the Firefox profile ${a.profile}.`, { timeoutMs: 8000 })
+  try {
+    await $.command.run({ command: 'login' })
+  } catch (error) {
+    await endLogin($)
+    $.ui.toast(`/login did not start: ${message(error)}`)
+  }
+}
+
+// The profile pick of a new account. The last option opens Firefox, where
+// the profile menu makes a new profile. The Firefox CLI has no flag for it.
+async function pickDraftProfile($: EngineInterface, value: string): Promise<void> {
+  if (value !== NEW_PROFILE) {
+    await setMenu($, m => ({ ...m, draftProfile: value }))
+    return
+  }
+  // A bare `firefox` opens the profile installs.ini names, which can be any
+  // account's. The profile of the account in use is the safe one to open.
+  const email = (await read($, identity))?.email.toLowerCase() ?? ''
+  const list = await read($, accounts)
+  const path = (list.find(a => a.email === email) ?? list.find(a => a.path !== ''))?.path ?? ''
+  try {
+    await $.process.run(path === '' ? ['setsid', '-f', 'firefox'] : ['setsid', '-f', 'firefox', '--profile', path], { timeoutMs: 5000 })
+  } catch (error) {
+    logFailure($, error)
+  }
+  $.ui.toast('Make the profile from the Firefox profile menu, then open accounts again to pick it.', { timeoutMs: 10000 })
+}
+
+async function saveDraft($: EngineInterface): Promise<void> {
+  const m = await read($, accountMenu)
+  if (m === null) return
+  const email = m.draftEmail.trim().toLowerCase()
+  const profile = (await read($, profiles)).find(p => p.path === m.draftProfile)
+  if (!isEmail(email)) {
+    $.ui.toast('Type the account email first.')
+    return
+  }
+  if (profile === undefined) {
+    $.ui.toast('Pick the Firefox profile that holds this account.')
+    return
+  }
+  await saveAccounts($, upsertAccount(await read($, accounts), { email, profile: profile.name, path: profile.path, isWork: guessWork(email) }))
+  await setMenu($, () => ({ mode: 'pick', draftEmail: '', draftProfile: '' }))
+  $.ui.toast(`Saved ${email} with the Firefox profile ${profile.name}.`)
+}
+
+// --- Hint drawer ----------------------------------------------------------------
+
+async function loadHintOpen($: EngineInterface): Promise<void> {
+  const v = await $.store.get(HINT_OPEN_KEY).catch(() => undefined)
+  await update($, hintOpen, () => v === true)
+}
+
+async function toggleHint($: EngineInterface): Promise<void> {
+  const next = !(await read($, hintOpen))
+  await update($, hintOpen, () => next)
+  await $.store.set(HINT_OPEN_KEY, next).catch(error => logFailure($, error))
+}
+
 // The ctx button: the largest used categories, as /context lists them.
 async function toastBreakdown($: EngineInterface): Promise<void> {
   try {
@@ -381,6 +549,8 @@ export const register: Register = (on, options) => {
     const done = await next(e)
     // The bash statusline reads this and prints nothing while the mod draws.
     await $.env.set('CHRYSAKI_STATUSLINE_MOD', '1')
+    $.clock.after(0, () => { void loadAccounts($).catch(error => logFailure($, error)) })
+    $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
     $.clock.after(0, () => {
       void refreshFast($)
         .then(() => seedUsage($))
@@ -442,6 +612,13 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // /login, from the switcher or typed, changes the account at its end.
+  on('command.run', { command: 'login' }, async ($, e, next) => {
+    const done = await next(e)
+    await refreshFast($)
+    return done
+  })
+
   on('prompt.submit', async ($, e, next) => {
     if (/^\s*\/context-handoff\b/.test(e.text)) await watchHandoff($, null)
     return next(e)
@@ -464,6 +641,18 @@ export const register: Register = (on, options) => {
     return ran
   })
 
+  // The hint text under the prompt as a drawer. The engine draws the mode
+  // label before it, outside this component. Closed, the drawer shows only its
+  // handle. Open, it shows the engine's own line, live pills and all.
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const isOpen = await read($, hintOpen)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const handle = <Button key="hint-drawer" label={isOpen ? '▾' : '▸'} plain onPress={() => { void toggleHint($) }} />
+    if (!isOpen) return <Box>{handle}</Box>
+    const line = await next(e)
+    return <Box>{handle}<Text> </Text>{line ?? <Text dimColor>{e.props.hint}</Text>}</Box>
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const below = await next(e)
@@ -476,6 +665,7 @@ export const register: Register = (on, options) => {
     const [c, cv, hasGit, busyHandoff, resumePath] = await Promise.all([
       read($, cache), read($, shownCache), read($, hasGitCommand), read($, handoff), read($, resume),
     ])
+    const [accountList, profileList, menu, pendingLogin] = await Promise.all([read($, accounts), read($, profiles), read($, accountMenu), read($, login)])
     const band = drawBand(table, Raster, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       columns: e.props.bodyColumns, barStyle, usdToSgd,
@@ -486,6 +676,17 @@ export const register: Register = (on, options) => {
       onHandoff: () => { void pressHandoff($, e.surface) },
       resumePath,
       onResume: () => { void pressResume($) },
+      accounts: accountList,
+      profiles: profileList,
+      accountMenu: menu,
+      loginEmail: pendingLogin?.email ?? null,
+      onAccounts: () => { void toggleAccounts($) },
+      onPickAccount: email => { void switchAccount($, email) },
+      onAddAccount: () => { void setMenu($, m => ({ ...m, mode: 'add' })) },
+      onCancelAdd: () => { void setMenu($, () => ({ mode: 'pick', draftEmail: '', draftProfile: '' })) },
+      onDraftEmail: text => { void setMenu($, m => ({ ...m, draftEmail: text })) },
+      onDraftProfile: value => { void pickDraftProfile($, value) },
+      onSaveAccount: () => { void saveDraft($) },
     })
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band

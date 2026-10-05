@@ -7,7 +7,8 @@
 
 import type { ElementConstructor, Elements, RasterProps, RenderElement } from 'claude-code'
 
-import type { CacheView, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import { NEW_PROFILE, accountLabel } from './accounts'
 import { cacheCard, toneColor } from './cache'
 import {
   barCells, costSgd, ctxColor, ctxMarker, fiveHourColor, isHandoffDue, kilo, leftEdge, marker, modelLabel,
@@ -43,6 +44,18 @@ export type BandData = {
   // The handoff path on the clipboard, while the session has no context yet.
   resumePath: string | null
   onResume: () => void
+  accounts: StatuslineAccount[]
+  profiles: FirefoxProfile[]
+  accountMenu: AccountMenu | null
+  // The account a switcher login waits for, or null.
+  loginEmail: string | null
+  onAccounts: () => void
+  onPickAccount: (email: string) => void
+  onAddAccount: () => void
+  onCancelAdd: () => void
+  onDraftEmail: (text: string) => void
+  onDraftProfile: (value: string) => void
+  onSaveAccount: () => void
 }
 
 // Below this width the band folds to the header and one line.
@@ -70,7 +83,27 @@ const GIT_MIN = 60
 
 // --- Primitives ----------------------------------------------------------------
 
-type Seg = { text: string; bg: string; fg: string; bold?: boolean }
+// A header segment. `text` gives the width. A segment with `press` draws its
+// label as a plain Button on the segment's ground.
+type Seg = {
+  text: string
+  bg: string
+  fg: string
+  bold?: boolean
+  press?: { key: string; label: string; hotkey: string; onPress: () => void }
+}
+
+function segBody(T: Table, s: Seg): RenderElement {
+  const { Box, Text, Button } = T
+  if (s.press === undefined) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
+  return (
+    <Box key={`seg-${s.press.key}`} backgroundColor={s.bg}>
+      <Text backgroundColor={s.bg}> </Text>
+      <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
+      <Text backgroundColor={s.bg}> </Text>
+    </Box>
+  )
+}
 
 function segWidth(segs: readonly Seg[]): number {
   return segs.reduce((n, s) => n + s.text.length + 3, 0)
@@ -84,7 +117,7 @@ function zigzag(T: Table, segs: readonly Seg[]): RenderElement[] {
     const next = segs[i + 1]
     const edge = rightEdge(i, segs.length)
     return [
-      <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>,
+      segBody(T, s),
       next === undefined ? <Text color={s.bg}>{edge}</Text> : <Text color={s.bg} backgroundColor={next.bg}>{edge}</Text>,
     ]
   })
@@ -99,7 +132,7 @@ function mirrored(T: Table, segs: readonly Seg[]): RenderElement[] {
     const edge = leftEdge(j, segs.length)
     return [
       prev === undefined ? <Text color={s.bg}>{edge}</Text> : <Text color={s.bg} backgroundColor={prev.bg}>{edge}</Text>,
-      <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>,
+      segBody(T, s),
     ]
   })
 }
@@ -174,10 +207,20 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   ]
   // The mirror of the left run: Amethyst, Royal Blue, then Emerald at the edge.
   const email = id?.email ?? ''
+  // The account list knows the work accounts. The config folder is the guess
+  // for an email it does not list.
+  const isWork = d.accounts.find(a => a.email === email.toLowerCase())?.isWork ?? id?.isWorkAccount ?? false
+  const accountSeg: Seg = {
+    text: `a: ${email}`,
+    bg: isWork ? CORE.topaz : CORE.emerald,
+    fg: ROLE.text,
+    bold: true,
+    press: { key: 'account', label: email, hotkey: 'a', onPress: d.onAccounts },
+  }
   const right: Seg[] = [
     ...(u?.costUsd === undefined ? [] : [{ text: `$${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true }]),
     ...(u?.startedAt === undefined ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text }]),
-    ...(email && !isCompact ? [{ text: email, bg: id?.isWorkAccount ? CORE.topaz : CORE.emerald, fg: ROLE.text, bold: true }] : []),
+    ...(email && !isCompact ? [accountSeg] : []),
   ]
   const inbox = d.inbox > 0 ? `◇ inbox ${d.inbox} ` : ''
   const room = Math.max(0, inner - segWidth(left) - segWidth(right) - inbox.length - 2)
@@ -191,6 +234,56 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
         : <Text />}
     </Box>
   )
+}
+
+// --- Account dropdown ------------------------------------------------------------
+
+// The rows under the header while the account dropdown is open. pick lists
+// the accounts, each with its Firefox profile. add takes a new account.
+function accountRows(T: Table, d: BandData): RenderElement[] {
+  const m = d.accountMenu
+  if (m === null) return []
+  const { Box, Text, Button } = T
+  const Select = 'Select' in T ? T.Select : undefined
+  const Input = 'Input' in T ? T.Input : undefined
+  const current = d.identity?.email.toLowerCase() ?? ''
+  const close = <Button key="account-close" label="close" hotkey="x" plain onPress={d.onAccounts} />
+  if (Select === undefined || Input === undefined) {
+    return [<Box key="account-rows" paddingX={1}><Text color={ROLE.muted}>This surface has no picker. Use a terminal or the desktop app.  </Text>{close}</Box>]
+  }
+  if (m.mode === 'pick') {
+    const options = d.accounts.map(a => ({ value: a.email, label: `${a.email === current ? '● ' : '○ '}${accountLabel(a)}` }))
+    const isKnown = d.accounts.some(a => a.email === current)
+    return [
+      <Box key="account-rows" paddingX={1}>
+        <Text color={ROLE.emeraldLt} bold>{'⬢ account  '}</Text>
+        {options.length > 0
+          ? <Select key="account-pick" options={options} value={isKnown ? current : undefined} autoFocus onSelect={value => d.onPickAccount(value)} />
+          : <Text color={ROLE.muted}>no accounts yet</Text>}
+        {spaces(T, 3)}
+        <Button key="account-add" label="new account" hotkey="n" plain onPress={d.onAddAccount} />
+        {spaces(T, 3)}
+        {close}
+        {d.loginEmail === null ? <Text /> : <Text color={ROLE.warn} bold>{`   ◐ signing in as ${d.loginEmail}`}</Text>}
+      </Box>,
+    ]
+  }
+  const profileOptions = [
+    ...d.profiles.map(p => ({ value: p.path, label: p.name })),
+    { value: NEW_PROFILE, label: '+ new Firefox profile' },
+  ]
+  return [
+    <Box key="account-rows" paddingX={1}>
+      <Text color={ROLE.emeraldLt} bold>{'✚ new account  '}</Text>
+      <Input key="account-email" placeholder="email" value={m.draftEmail} autoFocus submitLabel="next" onInput={value => d.onDraftEmail(value)} onSubmit={value => d.onDraftEmail(value)} />
+      {spaces(T, 3)}
+      <Select key="account-profile" label="firefox " options={profileOptions} value={m.draftProfile === '' ? undefined : m.draftProfile} onSelect={value => d.onDraftProfile(value)} />
+      {spaces(T, 3)}
+      <Button key="account-save" label="save" hotkey="s" plain onPress={d.onSaveAccount} />
+      {spaces(T, 3)}
+      <Button key="account-cancel" label="cancel" hotkey="x" plain onPress={d.onCancelAdd} />
+    </Box>,
+  ]
 }
 
 // --- Bar cells -----------------------------------------------------------------
@@ -464,16 +557,22 @@ function gitRows(T: Table, d: BandData, width: number): [RenderElement, RenderEl
 
 // --- Layout --------------------------------------------------------------------
 
-function divider(T: Table, d: BandData): RenderElement {
+// The solid rule between two panels. Each one takes the accent of the panel
+// it closes, Emerald Lt then Teal Lt, so it stands apart from the dim dotted
+// separators inside a panel. Inside the cache warning lead it warms to Blonde.
+const DIVIDER_COLORS = [ROLE.emeraldLt, ROLE.teal] as const
+
+function divider(T: Table, d: BandData, index: number): RenderElement {
   const { Text } = T
-  return <Text color={frameColor(d)}>│</Text>
+  const color = d.cacheView?.tone === 'warning' ? ROLE.warn : DIVIDER_COLORS[index] ?? ROLE.emeraldLt
+  return <Text color={color} bold>│</Text>
 }
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
-// Wide: usage │ context │ git. The bar columns take what their content
+// Wide: usage, context and git panels side by side. The bar columns take what their content
 // needs and git takes the rest, so no column carries empty space.
 function wideRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarCell[], BarCell[]]): RenderElement[] | null {
   const { Box } = T
@@ -487,15 +586,15 @@ function wideRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarC
   return [0, 1].map(i => (
     <Box key={`row-${i}`}>
       {barCell(T, R, cols[0][i] as BarCell, fits[0], barLength, widths[0] ?? 0, d)}
-      {divider(T, d)}
+      {divider(T, d, 0)}
       {barCell(T, R, cols[1][i] as BarCell, fits[1], barLength, widths[1] ?? 0, d)}
-      {divider(T, d)}
+      {divider(T, d, 1)}
       {i === 0 ? gitA : gitB}
     </Box>
   ))
 }
 
-// Medium: usage │ context over two rows, then git in two full-width rows.
+// Medium: the usage and context panels over two rows, then git in two full-width rows.
 function mediumRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [BarCell[], BarCell[]]): RenderElement[] {
   const { Box } = T
   const fits = cols.map(fitColumn) as [ColumnFit, ColumnFit]
@@ -506,7 +605,7 @@ function mediumRows(T: Table, R: RasterEl, d: BandData, inner: number, cols: [Ba
   const bars = [0, 1].map(i => (
     <Box key={`row-${i}`}>
       {barCell(T, R, cols[0][i] as BarCell, fits[0], barLength, widths[0] ?? 0, d)}
-      {divider(T, d)}
+      {divider(T, d, 0)}
       {barCell(T, R, cols[1][i] as BarCell, fits[1], barLength, widths[1] ?? 0, d)}
     </Box>
   ))
@@ -546,5 +645,6 @@ export function drawBand(T: Table, Raster: RasterEl, d: BandData): RenderElement
   const rows = (d.columns >= WIDE_COLUMNS ? wideRows(T, Raster, d, inner, cols) : null) ?? mediumRows(T, Raster, d, inner, cols)
   // One empty row parts the band from the transcript above it, and one more
   // parts the header from the grid.
-  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), <Box key="header-gap" height={1} />, ...rows]}</Box>
+  const menu = accountRows(T, d)
+  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...menu, <Box key="header-gap" height={1} />, ...rows]}</Box>
 }

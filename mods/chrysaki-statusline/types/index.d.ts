@@ -84,6 +84,35 @@ export type CacheView = { label: string; tone: CacheTone }
 // The expiry times already warned for, so each period alerts once.
 export type CacheAlert = { warnedFor?: number; coldFor?: number }
 
+// A Claude account and the Firefox user profile signed in to it.
+export type StatuslineAccount = {
+  email: string
+  // The profile's name in the Firefox profile switcher.
+  profile: string
+  // The profile folder, absolute. Empty until the name resolves.
+  path: string
+  isWork: boolean
+}
+
+export type FirefoxProfile = { name: string; path: string }
+
+// The account dropdown under the header. pick lists the accounts. add holds
+// the draft of a new one.
+export type AccountMenu = {
+  mode: 'pick' | 'add'
+  draftEmail: string
+  draftProfile: string
+}
+
+// A /login the switcher started. BROWSER points at bin/open-in-profile until
+// the account changes or the window lapses.
+export type PendingLogin = {
+  email: string
+  since: number
+  // The BROWSER value to put back, or null when it was unset.
+  prevBrowser: string | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'chrysaki-statusline': {
@@ -100,6 +129,12 @@ declare module 'claude-code' {
       handoff: PendingHandoff | null
       // A handoff path on the clipboard, shown as the resume key in a fresh session.
       resume: string | null
+      accounts: StatuslineAccount[]
+      profiles: FirefoxProfile[]
+      accountMenu: AccountMenu | null
+      login: PendingLogin | null
+      // True while the hint drawer under the prompt is open.
+      hintOpen: boolean
     }
   }
 }
