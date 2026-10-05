@@ -543,5 +543,6 @@ export function drawBand(T: Table, Raster: RasterEl, d: BandData): RenderElement
     [contextCell(T, d), cacheCell(T, d)],
   ]
   const rows = (d.columns >= WIDE_COLUMNS ? wideRows(T, Raster, d, inner, cols) : null) ?? mediumRows(T, Raster, d, inner, cols)
-  return <Box flexDirection="column">{[header(T, d, inner, false), ...rows]}</Box>
+  // One empty row parts the header from the grid.
+  return <Box flexDirection="column">{[header(T, d, inner, false), <Box key="header-gap" height={1} />, ...rows]}</Box>
 }
