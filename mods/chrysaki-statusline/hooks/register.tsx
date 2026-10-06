@@ -8,6 +8,7 @@ import type { AlertAction } from './cache'
 import { readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
 import type { Host } from './collect'
 import { drawBand } from './draw'
+import { SWEEP_FRAMES } from './ledger'
 import type { BarStyle } from './format'
 import { kilo } from './format'
 import { limitsKey, parseSaved, rollUsage, toSaved, withSaved } from './limits'
@@ -32,6 +33,10 @@ const profiles = atom({ plugin: 'chrysaki-statusline', key: 'profiles' } as cons
 const accountMenu = atom({ plugin: 'chrysaki-statusline', key: 'accountMenu' } as const, null as AccountMenu | null)
 const login = atom({ plugin: 'chrysaki-statusline', key: 'login' } as const, null as PendingLogin | null)
 const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as const, false)
+const sweep = atom({ plugin: 'chrysaki-statusline', key: 'sweep' } as const, 0)
+
+// The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
+const SWEEP_MS = 150
 
 // The $.store key that keeps the drawer open or closed across sessions.
 const HINT_OPEN_KEY = 'hintOpen'
@@ -532,6 +537,7 @@ async function toastBreakdown($: EngineInterface): Promise<void> {
 export const register: Register = (on, options) => {
   const barStyle = String(options.barStyle ?? 'line') as BarStyle
   const isAnimated = String(options.animate ?? 'off') === 'on'
+  const isRuleAnimated = String(options.ruleAnimation ?? 'on') === 'on'
   const usdToSgd = Number(options.usdToSgd ?? '1.35') || 1.35
   // Set when the model pushes or calls gh. The next slow refresh then skips
   // the five-minute cache. A reload clears it, which costs one late update.
@@ -569,6 +575,7 @@ export const register: Register = (on, options) => {
     $.clock.after(0, () => { void refreshResume($) })
     $.clock.every(CACHE_TICK_MS, () => { void refreshResume($) })
     if (isAnimated) $.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })
+    if (isRuleAnimated) $.clock.every(SWEEP_MS, () => { void update($, sweep, n => (n + 1) % SWEEP_FRAMES) })
     return done
   })
 
@@ -666,7 +673,7 @@ export const register: Register = (on, options) => {
     ])
     const band = drawBand(table, {
       usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
-      columns: e.props.bodyColumns, barStyle, usdToSgd,
+      columns: e.props.bodyColumns, barStyle, isRuleAnimated, sweep: isRuleAnimated ? await read($, sweep) : 0, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
       onGit: () => { void openGitPane($) },

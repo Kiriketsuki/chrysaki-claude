@@ -11,8 +11,9 @@ import type { StatuslineWindow } from '../types'
 import { cacheCard, toneColor } from './cache'
 import type { BandData } from './draw'
 import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, marker, untilReset } from './format'
+import { sampleLoop } from './gradient'
 import { CORE, ROLE } from './palette'
-import { hoverGroup, spaces, truncate } from './prims'
+import { frameColor, hoverGroup, spaces, truncate } from './prims'
 import type { Table } from './prims'
 
 const EDGE = ''
@@ -288,10 +289,41 @@ function gitCells(T: Table, d: BandData, width: number): [RenderElement, RenderE
 
 // --- Layout ----------------------------------------------------------------------
 
+// The dashed rule between two ledger rows. Animated, each dash takes its place
+// on the gradient loop, shifted by the sweep frame. Inside the cache warning
+// lead, or with the animation off, the rule takes the frame colour.
+function dashRule(T: Table, d: BandData, width: number): RenderElement {
+  const { Text } = T
+  const base = frameColor(d)
+  const text = dashes(width)
+  if (!d.isRuleAnimated || base !== 'promptBorder') return <Text color={base}>{text}</Text>
+  const unit = DASH + GAP_CELLS
+  const parts: RenderElement[] = []
+  for (let x = 0; x < width; x += unit) {
+    parts.push(<Text color={sampleLoop(SWEEP_STOPS, x / Math.max(1, width) + d.sweep / SWEEP_FRAMES)}>{text.slice(x, x + unit)}</Text>)
+  }
+  return <Text>{parts}</Text>
+}
+
+// A dash run of DASH cells, then GAP_CELLS blank cells, cut to `width`.
+const DASH = 2
+const GAP_CELLS = 1
+
+// The animated rule: a gradient loop that travels one full cycle across the
+// band in SWEEP_FRAMES steps. Only safe line accents take part: Royal Blue and
+// Amethyst are fills alone.
+export const SWEEP_FRAMES = 40
+const SWEEP_STOPS = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean, ROLE.teal] as const
+
+export function dashes(width: number): string {
+  const unit = '─'.repeat(DASH) + ' '.repeat(GAP_CELLS)
+  return unit.repeat(Math.ceil(Math.max(0, width) / unit.length)).slice(0, Math.max(0, width))
+}
+
 // The ledger rows for a band `inner` columns wide. At LEDGER_WIDE and up, git
 // shares the two rows. Below it, git takes two rows of its own.
 export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[] {
-  const { Box } = T
+  const { Box, Text } = T
   const bar = d.columns >= 120 ? BAR_LONG : BAR_SHORT
   const u = d.usage
   const left = [
@@ -304,11 +336,15 @@ export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[
   const [gitA, gitB] = gitCells(T, d, gitWidth)
   const row = (key: string, children: RenderElement[]) => <Box key={key} paddingLeft={1}>{children}</Box>
   const bars = left.map(([a, b]) => [a as RenderElement, spaces(T, CELL_GAP), b as RenderElement])
-  if (isWide) {
-    return [
+  const rows = isWide
+    ? [
       row('row-0', [...(bars[0] ?? []), spaces(T, CELL_GAP), gitA]),
       row('row-1', [...(bars[1] ?? []), spaces(T, CELL_GAP), gitB]),
     ]
-  }
-  return [row('row-0', bars[0] ?? []), row('row-1', bars[1] ?? []), row('row-2', [gitA]), row('row-3', [gitB])]
+    : [row('row-0', bars[0] ?? []), row('row-1', bars[1] ?? []), row('row-2', [gitA]), row('row-3', [gitB])]
+  // A dashed rule in the header rule's colour parts each ledger row from the
+  // next. The dashes are runs of the solid rule glyph with gaps, since the
+  // box-drawing dash glyphs read as dots at small sizes.
+  const rule = (i: number) => <Box key={`row-rule-${i}`} paddingLeft={1}>{dashRule(T, d, inner - 1)}</Box>
+  return rows.flatMap((r, i) => (i === 0 ? [r] : [rule(i), r]))
 }

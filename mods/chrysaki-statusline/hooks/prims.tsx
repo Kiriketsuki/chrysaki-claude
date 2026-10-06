@@ -2,6 +2,7 @@
 
 import type { Elements, RenderElement } from 'claude-code'
 
+import type { BandData } from './draw'
 import { CORE, ROLE } from './palette'
 
 export type Table = Elements[keyof Elements]
@@ -17,6 +18,13 @@ export function hoverGroup(T: Table, key: string, card: string, children: Render
       </Box>
     </Box>
   )
+}
+
+// The colour of the band's rules: the prompt's own rule colour. It warms to
+// Blonde inside the cache warning lead, so the alert also shows in the shape
+// of the band.
+export function frameColor(d: BandData): string {
+  return d.cacheView?.tone === 'warning' ? ROLE.warn : 'promptBorder'
 }
 
 export function spaces(T: Table, n: number): RenderElement {

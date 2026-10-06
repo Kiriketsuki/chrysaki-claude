@@ -14,7 +14,7 @@ import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, r
 import type { BarStyle } from './format'
 import { ledgerRows } from './ledger'
 import { CORE, ROLE } from './palette'
-import { hoverGroup, spaces } from './prims'
+import { frameColor, hoverGroup, spaces } from './prims'
 import type { Table } from './prims'
 
 export type { Table } from './prims'
@@ -30,6 +30,9 @@ export type BandData = {
   home: string
   columns: number
   barStyle: BarStyle
+  // The rule between ledger rows: animated, and its current frame.
+  isRuleAnimated: boolean
+  sweep: number
   usdToSgd: number
   onContext: () => void
   cache: StatuslineCache | null
@@ -138,11 +141,6 @@ function mirrored(T: Table, segs: readonly Seg[]): RenderElement[] {
   })
 }
 
-function frameColor(d: BandData): string {
-  // The header rule warms to Blonde inside the cache warning lead, so the
-  // alert also shows in the shape of the band.
-  return d.cacheView?.tone === 'warning' ? ROLE.warn : RULE_COLOR
-}
 
 // --- Header --------------------------------------------------------------------
 

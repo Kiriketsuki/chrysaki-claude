@@ -2,6 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
+import { dashes } from '../hooks/ledger'
+
 import { handoffPathFrom } from '../hooks/resume'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -273,3 +275,37 @@ test('the ledger opens each row with a jewel badge and draws no rule', async ($,
   }
 })
 
+
+test('a dashed rule parts the 5h row from the 7d row', { options: { ruleAnimation: 'off' } }, async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  for (const [columns, rules] of [[238, 1], [160, 3]] as const) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
+    const found = await ui.findAll({ type: 'Text', text: dashes(columns - 1) })
+    expect(found.length).toBe(rules)
+    expect(found[0]?.props.color).toBe('promptBorder')
+    await ui.unmount()
+  }
+})
+
+test('the animated rule runs a gradient that moves with the sweep', async ($, on) => {
+  const clock = answerMeasure(on)
+  on('env.set', async () => ({ value: undefined }))
+  on('fs.exists', async () => ({ value: false }))
+  on('settings.read', async () => ({ value: {} }))
+  on('command.list', async () => ({ value: [] }))
+  on('store.get', async () => ({ value: undefined }))
+  on('process.run', async () => ({ value: { ...RAN, exitCode: 1, stdout: '' } }))
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/home/k/repo', surface: 'terminal', isInteractive: true })
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(238) })
+  const colours = async () => (await ui.findAll({ type: 'Text', text: /^──\s?$/ })).map(t => String(t.props.color))
+  const before = await colours()
+  expect(before.length).toBeGreaterThan(10)
+  expect(new Set(before).size).toBeGreaterThan(3)
+  await clock.advance(150 * 5)
+  const after = await colours()
+  expect(after[0]).not.toBe(before[0])
+  await ui.unmount()
+})

@@ -135,6 +135,8 @@ declare module 'claude-code' {
       login: PendingLogin | null
       // True while the hint drawer under the prompt is open.
       hintOpen: boolean
+      // The frame of the animated rule between ledger rows.
+      sweep: number
     }
   }
 }

@@ -31,6 +31,16 @@
         "off"
       ]
     },
+    "ruleAnimation": {
+      "type": "string",
+      "title": "Animated row rule",
+      "description": "Run a gradient along the dashed rule between ledger rows. It redraws the band every 150 ms",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    },
     "usdToSgd": {
       "type": "string",
       "title": "USD to SGD rate",
