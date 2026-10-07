@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderSurface, Timer } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
 import type { AlertAction, CacheFileHost } from './cache'
@@ -15,7 +15,10 @@ import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from 
 import { LIVE_MS, fetchLimits, fetchOutage } from './live'
 import type { LiveHost } from './live'
 import type { OAuthLimits } from './oauth'
-import { HANDOFF_FILE, handoffPathFrom, resumeCommand } from './resume'
+import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff } from './handoff'
+import type { HandoffHost } from './handoff'
+import { HANDOFF_FILE } from './resume'
+import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
 
 export { HANDOFF_FILE }
 
@@ -39,6 +42,7 @@ const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as cons
 const sweep = atom({ plugin: 'chrysaki-statusline', key: 'sweep' } as const, 0)
 const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
 const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
+const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
 
 // The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
 const SWEEP_MS = 150
@@ -49,10 +53,6 @@ const HINT_OPEN_KEY = 'hintOpen'
 // A login the switcher started gives BROWSER back after this long, even when
 // the account never changed.
 const LOGIN_WINDOW_MS = 600000
-
-// A pending handoff gives up after this many main-thread turns end with no
-// handoff file found.
-const HANDOFF_MAX_MISSES = 2
 
 const ANIMATE_MS = 2000
 const REFRESH_MS = 60000
@@ -281,104 +281,30 @@ async function openGitPane($: EngineInterface): Promise<void> {
   }
 }
 
-// The handoff button: runs /context-handoff. The tracking itself starts in
-// watchHandoff, when the command runs, so a handoff typed by hand gets its
-// path copied too. The pending state lives in $.state, so a hot reload
-// between the press and the turn keeps it.
-async function pressHandoff($: EngineInterface, surface: RenderSurface): Promise<void> {
-  if ((await read($, handoff)) !== null) return
-  await watchHandoff($, surface)
-  $.ui.toast('Writing the handoff. Its path goes to the clipboard when the turn ends.')
-  try {
-    await $.command.run({ command: 'context-handoff' })
-  } catch {
-    try {
-      await $.prompt.submit({ text: '/context-handoff', asUser: true })
-    } catch (error) {
-      await update($, handoff, () => null)
-      $.ui.toast(`The handoff did not start: ${error instanceof Error ? error.message : String(error)}`)
-    }
+// The engine surface the handoff and resume keys in handoff.ts use.
+function handoffHostOf($: EngineInterface): HandoffHost {
+  return {
+    now: async () => $.clock.now(),
+    surface: async () => $.session.surface(),
+    getHandoff: async () => read($, handoff),
+    setHandoff: async fn => { await update($, handoff, fn) },
+    getResume: async () => read($, resume),
+    setResume: async path => { await update($, resume, () => path) },
+    hasContext: async () => (await read($, usage))?.ctxPercent !== undefined,
+    runCommand: async command => { await $.command.run({ command }) },
+    submit: async text => { await $.prompt.submit({ text, asUser: true }) },
+    run: async (argv, timeoutMs) => $.process.run(argv, timeoutMs === undefined ? undefined : { timeoutMs }),
+    home: async () => $.env.get('HOME'),
+    configDir: async () => $.env.get('CLAUDE_CONFIG_DIR'),
+    list: async dir => $.fs.list(dir),
+    mtime: async path => (await $.fs.stat(path)).mtimeMs,
+    exists: async path => $.fs.exists(path),
+    copy: async (text, surface) => (await $.ui.copy(surface === null ? { text } : { text, surface })).isCopied,
+    promptText: async () => (await $.prompt.read()).text,
+    fill: async text => (await $.prompt.fill({ text, mode: 'replace' })).isFilled,
+    toast: (text, timeoutMs) => { $.ui.toast(text, timeoutMs === undefined ? undefined : { timeoutMs }) },
+    fail: error => logFailure($, error),
   }
-}
-
-async function watchHandoff($: EngineInterface, surface: RenderSurface | null): Promise<void> {
-  const now = await $.clock.now()
-  const where = surface ?? (await $.session.surface().catch(() => null))
-  await update($, handoff, h => h ?? { since: now, surface: where, path: null, misses: 0 })
-}
-
-// The newest handoff file written since the press, in the project's and the
-// global handoffs directory. A fallback for a file no Write call named.
-async function newestHandoff($: EngineInterface, since: number): Promise<string | null> {
-  const [top, home, configDir] = await Promise.all([
-    $.process.run(['git', 'rev-parse', '--show-toplevel']).then(r => (r.exitCode === 0 ? r.stdout.trim() : '')).catch(() => ''),
-    $.env.get('HOME'),
-    $.env.get('CLAUDE_CONFIG_DIR'),
-  ])
-  const dirs = [top ? `${top}/.claude/handoffs` : '', `${configDir ?? `${home ?? ''}/.claude`}/handoffs`].filter(d => d !== '')
-  let best: { path: string; mtime: number } | null = null
-  for (const dir of dirs) {
-    const entries = await $.fs.list(dir).catch(() => [])
-    for (const entry of entries) {
-      const path = `${dir}/${entry.name}`
-      if (entry.kind !== 'file' || !HANDOFF_FILE.test(path)) continue
-      const stat = await $.fs.stat(path).catch(() => null)
-      if (stat !== null && stat.mtimeMs >= since - 5000 && (best === null || stat.mtimeMs > best.mtime)) best = { path, mtime: stat.mtimeMs }
-    }
-  }
-  return best?.path ?? null
-}
-
-// Runs as each main-thread turn ends. It copies the path once a handoff file
-// exists: the one a Write named, or the newest one written since the start.
-async function finishHandoff($: EngineInterface): Promise<void> {
-  const h = await read($, handoff)
-  if (h === null) return
-  const path = h.path ?? (await newestHandoff($, h.since))
-  if (path === null) {
-    if (h.misses + 1 < HANDOFF_MAX_MISSES) {
-      await update($, handoff, p => (p === null ? null : { ...p, misses: p.misses + 1 }))
-      return
-    }
-    await update($, handoff, () => null)
-    $.ui.toast('The handoff ended, but no handoff file was found to copy.')
-    return
-  }
-  await update($, handoff, () => null)
-  const copied = await $.ui.copy(h.surface === null ? { text: path } : { text: path, surface: h.surface })
-  $.ui.toast(copied.isCopied ? `Copied the handoff path: ${path}` : `The handoff is at ${path}. Copy is not available here.`, { timeoutMs: 10000 })
-}
-
-// The resume key's source: a handoff path on the clipboard. The plugin API
-// has no clipboard read, so wl-paste reads it. Only a session with no context
-// yet looks, so the read stops after the first turn.
-async function refreshResume($: EngineInterface): Promise<void> {
-  const hasContext = (await read($, usage))?.ctxPercent !== undefined
-  let path: string | null = null
-  if (!hasContext) {
-    try {
-      const r = await $.process.run(['wl-paste', '--no-newline', '--type', 'text/plain'], { timeoutMs: 2000 })
-      const found = r.exitCode === 0 ? handoffPathFrom(r.stdout, (await $.env.get('HOME')) ?? '') : null
-      path = found !== null && (await $.fs.exists(found)) ? found : null
-    } catch (error) {
-      logFailure($, error)
-    }
-  }
-  if (path !== (await read($, resume))) await update($, resume, () => path)
-}
-
-// The resume key: puts /context-resume and the path in an empty prompt box.
-// It never writes over a draft the person typed.
-async function pressResume($: EngineInterface): Promise<void> {
-  const path = await read($, resume)
-  if (path === null) return
-  const box = await $.prompt.read()
-  if (box.text.trim() !== '') {
-    $.ui.toast('The prompt holds a draft. Clear it, then press resume again.')
-    return
-  }
-  const filled = await $.prompt.fill({ text: resumeCommand(path), mode: 'replace' })
-  if (!filled.isFilled) $.ui.toast(`The prompt did not take the command. Type: ${resumeCommand(path)}`, { timeoutMs: 10000 })
 }
 
 // --- Account switcher -----------------------------------------------------------
@@ -522,6 +448,32 @@ async function saveDraft($: EngineInterface): Promise<void> {
   $.ui.toast(`Saved ${email} with the Firefox profile ${profile.name}.`)
 }
 
+// --- Share offer ---------------------------------------------------------------
+
+// A new artifact: a `p: share` key on the band and a desktop notice. Either
+// opens the artifact in the Firefox profile of the account that owns it.
+async function offerShare($: EngineInterface, url: string): Promise<void> {
+  const [raw, id, list, now] = await Promise.all([$.store.get(OFFERED_KEY).catch(() => undefined), read($, identity), read($, accounts), $.clock.now()])
+  const offered = parseOffered(raw)
+  // The paths fill in when the account dropdown opens. A list with a gap reads the profiles now.
+  const known = list.every(a => a.path !== '') ? list : resolvePaths(list, await readProfiles($).catch(() => []))
+  const offer = offerFor(url, id?.email ?? '', known, offered, now)
+  if (offer === null) return
+  await update($, shareOffer, () => offer)
+  await $.store.set(OFFERED_KEY, withOffered(offered, url)).catch(error => logFailure($, error))
+  $.ui.toast(`New artifact. Press p on the band, or click the desktop notice, to share it with ${offer.partner}.`, { timeoutMs: 8000 })
+  await $.process.run(['setsid', '-f', `${$.plugin.root}/bin/share-notify`, offer.path, offer.url, offer.partner], { timeoutMs: 5000 })
+    .catch(error => logFailure($, error))
+}
+
+async function openShare($: EngineInterface): Promise<void> {
+  const o = await read($, shareOffer)
+  if (o === null) return
+  await update($, shareOffer, () => null)
+  const argv = o.path === '' ? ['setsid', '-f', 'xdg-open', o.url] : ['setsid', '-f', 'firefox', '--profile', o.path, '-new-tab', o.url]
+  await $.process.run(argv, { timeoutMs: 5000 }).catch(error => $.ui.toast(`The artifact did not open: ${message(error)}. ${o.url}`, { timeoutMs: 10000 }))
+}
+
 // --- Hint drawer ----------------------------------------------------------------
 
 async function loadHintOpen($: EngineInterface): Promise<void> {
@@ -593,7 +545,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   $.clock.after(0, () => { void refreshOutage($) })
   $.clock.after(0, () => { void refreshGitCommand($).then(() => tickCache($, rt.cacheConfig, rt.isTurnRunning())) })
   // The resume key looks at the clipboard on the same clock as the cache.
-  $.clock.after(0, () => { void refreshResume($) })
+  $.clock.after(0, () => { void refreshResume(handoffHostOf($)) })
   return [
     $.clock.every(REFRESH_MS, () => {
       const isForced = rt.takeRemoteDue()
@@ -607,7 +559,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
       void refreshOutage($)
     }),
     $.clock.every(CACHE_TICK_MS, () => { void tickCache($, rt.cacheConfig, rt.isTurnRunning()) }),
-    $.clock.every(CACHE_TICK_MS, () => { void refreshResume($) }),
+    $.clock.every(CACHE_TICK_MS, () => { void refreshResume(handoffHostOf($)) }),
     ...(rt.isAnimated ? [$.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })] : []),
     ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void update($, sweep, n => (n + 1) % SWEEP_FRAMES) })] : []),
   ]
@@ -688,10 +640,10 @@ export const register: Register = (on, options) => {
     const done = await next(e)
     if (e.agentId === undefined) {
       isTurnRunning = false
-      await finishHandoff($)
+      await finishHandoff(handoffHostOf($))
       await refreshFast($)
       await tickCache($, cacheConfig, isTurnRunning)
-      await refreshResume($)
+      await refreshResume(handoffHostOf($))
     }
     return done
   })
@@ -699,7 +651,7 @@ export const register: Register = (on, options) => {
   // A git command from the model moves the branch line at once.
   // /context-handoff, typed or pressed, starts the watch for its file.
   on('command.run', { command: 'context-handoff' }, async ($, e, next) => {
-    await watchHandoff($, null)
+    await watchHandoff(handoffHostOf($), null)
     return next(e)
   })
 
@@ -711,7 +663,7 @@ export const register: Register = (on, options) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (/^\s*\/context-handoff\b/.test(e.text)) await watchHandoff($, null)
+    if (/^\s*\/context-handoff\b/.test(e.text)) await watchHandoff(handoffHostOf($), null)
     return next(e)
   })
 
@@ -729,6 +681,14 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     if (/\bgit\b/.test(e.command)) await refreshFast($)
     if (/\bgh\b|\bgit push\b/.test(e.command)) isRemoteDue = true
+    return ran
+  })
+
+  // A publish that makes a new artifact offers the share with the partner account.
+  on('tool.call', { tool: 'Artifact' }, async ($, e, next) => {
+    const ran = await next(e)
+    const url = ran.deny === undefined && ran.isError !== true && isNewPublish(e) ? artifactUrlFrom(ran.text ?? '') : null
+    if (url !== null) await offerShare($, url)
     return ran
   })
 
@@ -763,21 +723,23 @@ export const register: Register = (on, options) => {
       reseedAt = now
       clocks = startup($, rt, clocks)
     }
-    const [fetchState, down] = await Promise.all([read($, limitsFetch), read($, outage)])
+    const [fetchState, down, offer] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer)])
     const band = drawBand(table, {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       isLimitsBusy: fetchState.isBusy,
       onRefreshLimits: () => { void refreshLimits($, true) },
       outage: down,
       onOutage: () => { void openOutage($, down) },
+      share: liveOffer(offer, now),
+      onShare: () => { void openShare($) },
       columns: e.props.bodyColumns, barStyle, isRuleAnimated, sweep: isRuleAnimated ? await read($, sweep) : 0, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
       onGit: () => { void openGitPane($) },
       isHandingOff: busyHandoff !== null,
-      onHandoff: () => { void pressHandoff($, e.surface) },
+      onHandoff: () => { void pressHandoff(handoffHostOf($), e.surface) },
       resumePath,
-      onResume: () => { void pressResume($) },
+      onResume: () => { void pressResume(handoffHostOf($)) },
       accounts: accountList,
       profiles: profileList,
       accountMenu: menu,

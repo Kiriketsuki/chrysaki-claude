@@ -7,7 +7,7 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { AccountMenu, CacheView, FirefoxProfile, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
@@ -39,6 +39,8 @@ export type BandData = {
   onRefreshLimits: () => void
   // The worst open incident on the status page, and the press that opens it.
   outage: StatuslineOutage | null
+  share: ShareOffer | null
+  onShare: () => void
   onOutage: () => void
   onContext: () => void
   cache: StatuslineCache | null
@@ -205,8 +207,17 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     bold: true,
     press: { key: 'outage', label: outageLabel, hotkey: 'o', onPress: d.onOutage },
   }]
+  // The share key for a new artifact. It never drops, like the outage badge.
+  const shareSeg: Seg[] = d.share === null ? [] : [{
+    text: 'p: ↗ share',
+    bg: CORE.teal,
+    fg: ROLE.text,
+    bold: true,
+    press: { key: 'share', label: '↗ share', hotkey: 'p', onPress: d.onShare },
+  }]
   const right: Seg[] = [
     ...outageSeg,
+    ...shareSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),
     ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text, drop: 2 }]),
     ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
