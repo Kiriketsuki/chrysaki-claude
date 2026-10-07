@@ -7,7 +7,7 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
@@ -41,6 +41,8 @@ export type BandData = {
   outage: StatuslineOutage | null
   share: ShareOffer | null
   onShare: () => void
+  lag: StatuslineLag | null
+  onLag: () => void
   onOutage: () => void
   onContext: () => void
   cache: StatuslineCache | null
@@ -215,7 +217,17 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     bold: true,
     press: { key: 'share', label: '↗ share', hotkey: 'p', onPress: d.onShare },
   }]
+  // The lag badge from chrysaki-lag. It never drops, like the outage badge.
+  const lag = d.lag
+  const lagSeg: Seg[] = lag === null ? [] : [{
+    text: `l: ▲ ${lag.bound} ${lag.pct}%`,
+    bg: lag.level === 'laggy' ? CORE.error : CORE.blonde,
+    fg: lag.level === 'laggy' ? ROLE.text : CORE.abyss,
+    bold: true,
+    press: { key: 'lag', label: `▲ ${lag.bound} ${lag.pct}%`, hotkey: 'l', onPress: d.onLag },
+  }]
   const right: Seg[] = [
+    ...lagSeg,
     ...outageSeg,
     ...shareSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),

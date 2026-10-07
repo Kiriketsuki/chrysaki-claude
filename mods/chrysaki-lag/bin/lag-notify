@@ -1,0 +1,7 @@
+#!/bin/sh
+# The desktop notice for a lag that lasts. It prints `open` when the person
+# clicks the notice or its button, and the mod then opens the /lag pane in
+# the session that sent it.
+# Usage: lag-notify <title> <body>
+notify-send -a 'Claude Code' -i utilities-system-monitor -u critical -t 0 \
+	-A default='Open /lag' -A open='Open /lag' "$1" "$2" | sed 's/^default$/open/'

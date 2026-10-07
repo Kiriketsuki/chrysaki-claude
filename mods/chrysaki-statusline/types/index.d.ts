@@ -72,6 +72,16 @@ export type StatuslineGit = {
   repoPath: string
 }
 
+// The lag badge, from the chrysaki-lag state file.
+export type StatuslineLag = {
+  level: 'busy' | 'laggy'
+  bound: 'io' | 'mem' | 'cpu'
+  // The bound resource's pressure share over 10 s, in percent.
+  pct: number
+  // The top causes, as `label detail` lines for the hover card.
+  top: string[]
+}
+
 // A new artifact the band offers to open for a share with the partner account.
 export type ShareOffer = {
   url: string
@@ -179,6 +189,8 @@ declare module 'claude-code' {
       outage: StatuslineOutage | null
       // The share offer for the newest artifact, until it is pressed or lapses.
       shareOffer: ShareOffer | null
+      // The lag badge, or null while the machine is calm.
+      lag: StatuslineLag | null
     }
   }
 }

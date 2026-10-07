@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
 import type { AlertAction, CacheFileHost } from './cache'
@@ -18,6 +18,7 @@ import type { OAuthLimits } from './oauth'
 import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff } from './handoff'
 import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
+import { LAG_FILE, lagFrom } from './lagfile'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
 
 export { HANDOFF_FILE }
@@ -42,6 +43,7 @@ const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as cons
 const sweep = atom({ plugin: 'chrysaki-statusline', key: 'sweep' } as const, 0)
 const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
 const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
+const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
 const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
 
 // The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
@@ -474,6 +476,22 @@ async function openShare($: EngineInterface): Promise<void> {
   await $.process.run(argv, { timeoutMs: 5000 }).catch(error => $.ui.toast(`The artifact did not open: ${message(error)}. ${o.url}`, { timeoutMs: 10000 }))
 }
 
+// --- Lag badge -------------------------------------------------------------------
+
+// Reads the chrysaki-lag state file. Without the mod, the file never appears.
+async function refreshLag($: EngineInterface): Promise<void> {
+  const [dir, now] = await Promise.all([$.env.get('XDG_RUNTIME_DIR'), $.clock.now()])
+  const text = await $.fs.read(`${dir ?? '/tmp'}/${LAG_FILE}`).catch(() => null)
+  const next = typeof text === 'string' ? lagFrom(text, now) : null
+  if (JSON.stringify(next) !== JSON.stringify(await read($, lag))) await update($, lag, () => next)
+}
+
+// The badge opens /lag when chrysaki-lag is loaded, else a toast of the causes.
+async function openLag($: EngineInterface, l: StatuslineLag | null): Promise<void> {
+  if ((await $.command.list().catch(() => [])).some(c => c.name === 'lag')) await $.command.run({ command: 'lag' })
+  else if (l !== null) $.ui.toast(l.top.length > 0 ? l.top.join(' · ') : 'No cause stands out.', { timeoutMs: 8000 })
+}
+
 // --- Hint drawer ----------------------------------------------------------------
 
 async function loadHintOpen($: EngineInterface): Promise<void> {
@@ -546,6 +564,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   $.clock.after(0, () => { void refreshGitCommand($).then(() => tickCache($, rt.cacheConfig, rt.isTurnRunning())) })
   // The resume key looks at the clipboard on the same clock as the cache.
   $.clock.after(0, () => { void refreshResume(handoffHostOf($)) })
+  $.clock.after(0, () => { void refreshLag($) })
   return [
     $.clock.every(REFRESH_MS, () => {
       const isForced = rt.takeRemoteDue()
@@ -560,6 +579,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
     }),
     $.clock.every(CACHE_TICK_MS, () => { void tickCache($, rt.cacheConfig, rt.isTurnRunning()) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshResume(handoffHostOf($)) }),
+    $.clock.every(CACHE_TICK_MS, () => { void refreshLag($) }),
     ...(rt.isAnimated ? [$.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })] : []),
     ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void update($, sweep, n => (n + 1) % SWEEP_FRAMES) })] : []),
   ]
@@ -723,7 +743,7 @@ export const register: Register = (on, options) => {
       reseedAt = now
       clocks = startup($, rt, clocks)
     }
-    const [fetchState, down, offer] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer)])
+    const [fetchState, down, offer, lagNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag)])
     const band = drawBand(table, {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       isLimitsBusy: fetchState.isBusy,
@@ -732,6 +752,8 @@ export const register: Register = (on, options) => {
       onOutage: () => { void openOutage($, down) },
       share: liveOffer(offer, now),
       onShare: () => { void openShare($) },
+      lag: lagNow,
+      onLag: () => { void openLag($, lagNow) },
       columns: e.props.bodyColumns, barStyle, isRuleAnimated, sweep: isRuleAnimated ? await read($, sweep) : 0, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
