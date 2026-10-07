@@ -25,6 +25,25 @@ export type Cause = {
   container?: string
 }
 
+export type WarnLevel = 'warn' | 'crit'
+export type WarnGroup = 'disk' | 'memory' | 'heat' | 'power' | 'system'
+
+// One health warning. The health check makes a new list every 30 s.
+export type Warning = {
+  // Stable for one source, such as `disk:/home` or `temp:nvme1`.
+  key: string
+  group: WarnGroup
+  level: WarnLevel
+  // The badge text, such as `/home 91%`.
+  short: string
+  // The pane and notice text.
+  text: string
+  // What a hide matches: the key, the level, and for units the unit names.
+  // A change of level or of units shows the warning again.
+  mark: string
+  isHidden: boolean
+}
+
 // What the /lag pane draws.
 export type LagView = {
   at: number
@@ -33,6 +52,8 @@ export type LagView = {
   pressure: Pressure
   swap: Swap
   causes: Cause[]
+  // The warnings from the last health check, the worst first.
+  warnings: Warning[]
   // False when docker is missing or its daemon does not answer.
   hasDocker: boolean
   // The last result of a stop, or a read error.

@@ -1,18 +1,20 @@
-// Draws the /lag pane: the verdict, the pressure bars, the swap line, one row
-// per cause with its stop key, and the key line. Pure functions of the view.
+// Draws the /lag pane: the verdict, the pressure bars, the swap line, the
+// health warnings with their hide keys, one row per cause with its stop key,
+// and the key line. Pure functions of the view.
 // Every change goes through the handlers in `Act`, which register.tsx supplies.
 
 import type { Elements, RenderElement } from 'claude-code'
 
-import type { Cause, LagArmed, LagView, Level, Psi, Resource } from '../types'
+import type { Cause, LagArmed, LagView, Level, Psi, Resource, Warning } from '../types'
 import { BOUND_LABEL } from './pressure'
 import type { Thresholds } from './pressure'
-import { BAR_EMPTY, BAR_FULL, C, EDGE, HEX, HEX_HOLLOW, LEVEL_COLOR, LEVEL_FILL, RISE } from './theme'
+import { BAR_EMPTY, BAR_FULL, C, EDGE, HEX, HEX_HOLLOW, LEVEL_COLOR, LEVEL_FILL, RISE, WARN } from './theme'
 
 type Table = Elements[keyof Elements]
 
 export type Act = {
   press: (c: Cause) => void
+  toggle: (w: Warning) => void
   refresh: () => void
   close: () => void
 }
@@ -31,6 +33,9 @@ export const CONFIRM_MS = 5000
 const BAR = 16
 const LABEL = 20
 const KEY = 14
+const GROUP = 8
+// The hide keys of the warning rows. The cause rows take the digits.
+const WARN_KEYS = 'abcdef'
 
 function truncate(text: string, width: number): string {
   if (width <= 0) return ''
@@ -93,6 +98,32 @@ function swapLine(T: Table, v: LagView): RenderElement {
   )
 }
 
+// The visible warnings first, the hidden ones last and dim.
+function warningRows(T: Table, m: Model, act: Act, list: readonly Warning[]): RenderElement {
+  const { Box, Text, Button } = T
+  if (list.length === 0) return <Box key="warnings"><Text color={C.emeraldLt}>{`${HEX} `}</Text><Text color={C.text2}>no health warnings</Text></Box>
+  const rows = [...list.filter(w => !w.isHidden), ...list.filter(w => w.isHidden)].slice(0, WARN_KEYS.length)
+  const textWidth = Math.max(10, m.columns - GROUP - KEY - 6)
+  return (
+    <Box key="warnings" flexDirection="column">
+      {rows.map((w, i) => {
+        const color = w.isHidden ? C.muted : w.level === 'crit' ? C.errorLt : C.blondeLt
+        return (
+          <Box key={`warn-${w.key}`}>
+            <Text color={color}>{`${w.isHidden ? HEX_HOLLOW : WARN} `}</Text>
+            <Text color={w.isHidden ? C.muted : C.text2}>{w.group.padEnd(GROUP)}</Text>
+            <Text color={w.isHidden ? C.muted : C.text} bold={w.level === 'crit' && !w.isHidden}>{truncate(w.text, textWidth).padEnd(textWidth)}</Text>
+            <Text>{'  '}</Text>
+            <Box key={`warn-box-${w.key}`} width={KEY}>
+              <Button key={`warn-key-${w.key}`} label={w.isHidden ? 'show' : 'hide'} hotkey={WARN_KEYS[i]} plain onPress={() => act.toggle(w)} />
+            </Box>
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
 function keyLabel(c: Cause, armed: LagArmed | null, stopping: readonly string[], now: number): string {
   if (stopping.includes(c.key)) return '◐ stopping'
   if (armed?.key === c.key && now - armed.at < CONFIRM_MS) return 'confirm stop'
@@ -134,7 +165,9 @@ export function lagPane(T: Table, m: Model, act: Act): RenderElement {
       {header(T, v, m.now)}
       <Box key="bars" marginTop={1}>{(['io', 'memory', 'cpu'] as const).map(r => bar(T, r, v.pressure[r], m.thresholds))}</Box>
       {swapLine(T, v)}
-      <Box key="rule-top" marginTop={1}>{rule}</Box>
+      <Box key="rule-warn" marginTop={1}>{rule}</Box>
+      {warningRows(T, m, act, v.warnings)}
+      <Box key="rule-top">{rule}</Box>
       {v.causes.length === 0
         ? <Text key="none" color={C.muted}>No process or container stands out.</Text>
         : <Box key="causes" flexDirection="column">{v.causes.map((c, i) => causeRow(T, m, act, c, i))}</Box>}
@@ -143,7 +176,7 @@ export function lagPane(T: Table, m: Model, act: Act): RenderElement {
         <Button key="lag-refresh" label="refresh" hotkey="r" plain onPress={act.refresh} />
         <Text>{'   '}</Text>
         <Button key="lag-close" label="close" hotkey="x" plain onPress={act.close} />
-        <Text color={C.muted}>{'   a stop key asks once more before it stops'}</Text>
+        <Text color={C.muted}>{'   a stop key asks once more before it stops · a hide lasts until the warning changes'}</Text>
       </Box>
       {v.note === null ? <Text /> : <Text key="note" color={C.blondeLt}>{v.note}</Text>}
     </Box>

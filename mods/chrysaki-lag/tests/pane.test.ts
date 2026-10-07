@@ -3,10 +3,14 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
 import { DOCKER, PSI_CPU, PSI_IO, PSI_MEMORY, SWAPS, snapshotJson } from './fixtures'
+import { DOCKER_DF, mount, snapJson } from './health-fixtures'
 
 const RAN = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const NOW = Date.parse('2026-10-07T07:00:00Z')
 const STATE = '/run/user/1000/chrysaki-lag/state.json'
+const HIDDEN = '/run/user/1000/chrysaki-lag/hidden.json'
+// The health snapshot: /home is critical, and three units failed.
+const HEALTH = snapJson({ mounts: [mount('/', 'ext4', 457, 6), mount('/home', 'ext4', 938, 98)] })
 const ZAP_STAT = '4420 (QtWebEngineProc) D 2627 1 1 0 -1 4194560 1 0 0 0 10 20 0 0 20 0 30 0 900 0 0'
 
 type Seen = { ran: string[][]; wrote: [string, string][]; clock: MockClock }
@@ -21,7 +25,10 @@ async function start($: Engine, on: On, shared: string | null, zapReads = 1): Pr
   let zapLeft = zapReads
   on('process.run', async (_$, e) => {
     seen.ran.push([...e.argv])
+    if (e.argv[0] === 'python3' && String(e.argv[2]).endsWith('/health-snapshot')) return { value: { ...RAN, stdout: HEALTH } }
     if (e.argv[0] === 'python3') return { value: { ...RAN, stdout: snapshotJson(NOW) } }
+    if (e.argv[1] === 'info') return { value: { ...RAN, stdout: '/home/k/docker\n' } }
+    if (e.argv[1] === 'system') return { value: { ...RAN, stdout: DOCKER_DF } }
     if (e.argv[0] === 'docker') return { value: { ...RAN, stdout: DOCKER } }
     return { value: { ...RAN, stdout: '' } }
   })
@@ -29,6 +36,9 @@ async function start($: Engine, on: On, shared: string | null, zapReads = 1): Pr
     const files: Record<string, string> = {
       '/proc/pressure/io': PSI_IO, '/proc/pressure/memory': PSI_MEMORY, '/proc/pressure/cpu': PSI_CPU, '/proc/swaps': SWAPS,
     }
+    // The mock serves back what the session wrote.
+    const written = seen.wrote.filter(([path]) => path === e.path).at(-1)
+    if (written !== undefined) return { value: written[1] }
     if (e.path === STATE && shared !== null) return { value: shared }
     if (e.path === '/proc/4420/stat' && zapLeft > 0) {
       zapLeft -= 1
@@ -61,7 +71,21 @@ test('a session that finds no shared file samples and writes it', async ($, on) 
   const seen = await start($, on, null)
   const writes = seen.wrote.filter(([path]) => path === STATE)
   expect(writes).toHaveLength(1)
-  expect(JSON.parse(writes[0]?.[1] ?? '{}')).toMatchObject({ v: 1, level: 'laggy', bound: 'io' })
+  const file = JSON.parse(writes[0]?.[1] ?? '{}')
+  expect(file).toMatchObject({ v: 1, level: 'laggy', bound: 'io' })
+  expect(file.health.warnings.map((w: { short: string }) => w.short)).toEqual(['/home 98%', '3 units'])
+})
+
+test('a critical warning sends one notice, and the next check within the hour sends none', async ($, on) => {
+  const seen = await start($, on, null)
+  const notices = () => seen.ran.filter(argv => argv[0]?.endsWith('/lag-notify') && argv[1]?.startsWith('Machine warning'))
+  expect(notices()).toHaveLength(1)
+  expect(notices()[0]?.[1]).toBe('Machine warning: /home 98%')
+  expect(notices()[0]?.[2]).toBe('/home is 98% full, 19G free')
+  await seen.clock.advance(60000)
+  expect(notices()).toHaveLength(1)
+  // A disk-bound machine never starts the slow docker scan.
+  expect(seen.ran.some(argv => argv[1] === 'system')).toBe(false)
 })
 
 test('a session that finds a fresh shared file leaves it alone', async ($, on) => {
@@ -92,6 +116,25 @@ test('/lag draws the causes, and a stop key asks once before it stops', async ($
   await seen.clock.advance(5000)
   expect(seen.ran).toContainEqual(['kill', '-TERM', '4420'])
   expect(seen.ran.some(argv => argv[0] === 'kill' && argv[1] === '-KILL')).toBe(false)
+  await ui.unmount()
+})
+
+test('/lag lists the warnings, and a hide key hides one and clears it from the badge', async ($, on) => {
+  const seen = await start($, on, null)
+  await $.command.run({ command: 'lag', args: '' } as never)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-lag', surface: 'terminal', component: 'Pane', requestId: 'lag', props: props() } as never)
+  expect(await ui.find({ type: 'Text', text: /\/home is 98% full/ })).toBeDefined()
+  expect((await ui.find({ key: 'warn-key-units' }))?.props.label).toBe('hide')
+
+  await ui.press({ key: 'warn-key-units' })
+  expect((await ui.find({ key: 'warn-key-units' }))?.props.label).toBe('show')
+  const hidden = JSON.parse(seen.wrote.filter(([path]) => path === HIDDEN).at(-1)?.[1] ?? '{}')
+  expect(hidden.marks).toHaveLength(1)
+  const state = JSON.parse(seen.wrote.filter(([path]) => path === STATE).at(-1)?.[1] ?? '{}')
+  expect(state.health.warnings.find((w: { key: string }) => w.key === 'units').isHidden).toBe(true)
+
+  await ui.press({ key: 'warn-key-units' })
+  expect((await ui.find({ key: 'warn-key-units' }))?.props.label).toBe('hide')
   await ui.unmount()
 })
 

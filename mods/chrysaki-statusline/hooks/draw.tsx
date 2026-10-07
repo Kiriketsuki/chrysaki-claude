@@ -7,7 +7,7 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
@@ -42,6 +42,7 @@ export type BandData = {
   share: ShareOffer | null
   onShare: () => void
   lag: StatuslineLag | null
+  warn: StatuslineWarn | null
   onLag: () => void
   onOutage: () => void
   onContext: () => void
@@ -226,8 +227,19 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     bold: true,
     press: { key: 'lag', label: `▲ ${lag.bound} ${lag.pct}%`, hotkey: 'l', onPress: d.onLag },
   }]
+  // The warning badge from chrysaki-lag. It opens /lag too.
+  const warn = d.warn
+  const warnText = warn === null ? '' : `⚠ ${warn.short}${warn.more > 0 ? ` +${warn.more}` : ''}`
+  const warnSeg: Seg[] = warn === null ? [] : [{
+    text: `w: ${warnText}`,
+    bg: warn.level === 'crit' ? CORE.error : CORE.blonde,
+    fg: warn.level === 'crit' ? ROLE.text : CORE.abyss,
+    bold: true,
+    press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
+  }]
   const right: Seg[] = [
     ...lagSeg,
+    ...warnSeg,
     ...outageSeg,
     ...shareSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),
