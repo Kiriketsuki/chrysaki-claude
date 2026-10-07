@@ -20,7 +20,7 @@ The engine sends rate limits, context and cost to the mod, and the mod reads liv
 
 The engine pushes rate limits from API response headers after each turn. The mod also reads `GET https://api.anthropic.com/api/oauth/usage` at startup and every 5 minutes, so the band shows usage from other sessions without a request. The mod signs the read through `$.session.authorize()` and never sees the token.
 
-- Press the reset time of either window to read usage now. The arrow turns to `◐` while the read runs. A press has a 30-second cooldown.
+- Press the reset time of either window to read usage now. The arrow turns to `◐` while the read runs. Each press reads again, unless a read is already running.
 - The 7d hover card lists the model-scoped weekly limits from the same response.
 - A window past its reset time shows as 0% within 60 seconds, with no request.
 - The mod saves each new reading in its plugin store under `limits:<account email>`. A fresh session draws that reading, rolled over to the current time, until its first read returns.
@@ -28,6 +28,16 @@ The engine pushes rate limits from API response headers after each turn. The mod
 ## Outage badge
 
 Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.json`. While an incident is open, the header shows `o: ⚠ <impact>`. The badge is Blonde for a minor incident and Error for a major one. `+N` counts the other open incidents. Press `ctrl+x tab`, then `o`, or click the badge to open the status page.
+
+## Share key
+
+The two work accounts, jlim@aurrigo.com and limj@aurrigo.com, share each new artifact with each other. Neither the Artifact tool nor the plugin API can share an artifact, so the mod opens the page and the person shares it.
+
+- After an Artifact publish that makes a new artifact, the header shows `p: ↗ share` on Teal. A desktop notice with an `Open to share` button appears too.
+- Press `ctrl+x tab`, then `p`, click the key, or click the notice. The artifact opens in the Firefox profile of the account that published it. Add the other account from the Share menu there.
+- The mod offers each artifact once. A republish or an update gives no new offer. The mod keeps the offered links in its plugin store under `shareOffered`.
+- The key and the notice leave after 30 minutes. The key also leaves after a press.
+- The account list of the account switcher names each profile. The pairs live in `SHARE_PARTNERS` in `hooks/share.ts`.
 
 ## /clear
 

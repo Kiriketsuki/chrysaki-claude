@@ -72,6 +72,17 @@ export type StatuslineGit = {
   repoPath: string
 }
 
+// A new artifact the band offers to open for a share with the partner account.
+export type ShareOffer = {
+  url: string
+  // The account that published it, and the account to share it with.
+  owner: string
+  partner: string
+  // The owner's Firefox profile folder, or empty when no account entry names one.
+  path: string
+  at: number
+}
+
 // A /context-handoff run the mod watches, to copy the file path it writes.
 export type PendingHandoff = {
   since: number
@@ -166,6 +177,8 @@ declare module 'claude-code' {
       sweep: number
       limitsFetch: LimitsFetch
       outage: StatuslineOutage | null
+      // The share offer for the newest artifact, until it is pressed or lapses.
+      shareOffer: ShareOffer | null
     }
   }
 }
