@@ -5,24 +5,33 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 ## What changes from the bash statusline
 
 - The band is one more ruled section of the prompt box. Its rules and column dividers take the engine's `promptBorder` theme colour, the colour of the prompt's own rules.
-- The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right.
-- Below the header, an empty drawer slot holds the account dropdown. The ledger under it sets every figure on one grid: usage, context and git share two rows at 200 columns and up. Below 200 columns git takes two rows of its own. Under 100 columns the band folds to one line.
+- The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right. When the segments do not fit, the header drops the version first, then the session clock, the folder and the account. The model, the outage badge and the cost always stay.
+- Below the header, an empty drawer slot holds the account dropdown. The ledger under it sets every figure on a grid of three columns: usage, context and git. Usage and context take the width their figures need. Git takes the rest, with the commit age at the right edge. A `│` with two cells of padding on each side parts the columns. The dashed rule crosses each separator as `┼`, or ends under it as `┴`.
+- The bars are 16 cells wide, or 12 when the band is tight. Git shares the two rows from 153 columns. Below that, git takes two rows of its own. Under 100 columns the band folds to one line.
 - Each ledger row opens with a filled jewel badge and a powerline edge: `5h` on Emerald, `7d` on Teal, `ctx` on Royal Blue Lt, `cache` on Amethyst Lt, `git` and `diff` on Rhodolite. The badges are the only fills. A dashed rule parts each ledger row from the next. A gradient of Emerald Lt, Teal Lt and Cerulean runs along it, one 6-second cycle every 40 steps of 150 ms. The `ruleAnimation` option turns the motion off. Inside the cache warning lead the rule turns Blonde.
 - The context colour goes by tokens, not by percent: Teal under 250k, Blonde from 250k, Error from 500k. A 1M window and a 200k window warn at the same size.
 - Bars default to the static `line` style. Each usage bar cell takes the colour of its zone: Emerald Lt to 50%, Teal Lt to 75%, Blonde Lt to 90%, then Error Lt. The context zones sit at 250k and 500k tokens. Empty cells are dim sockets in the Border colour, and each percent takes the colour of the zone it reached.
-- Each segment shows a card with details on hover. The `ctx` control shows the context breakdown as a toast.
+- Each segment shows a card with details on hover. The `ctx` control opens the context tab of `/insight` when Claude Code loads the `chrysaki-insight` mod. Without it, the control shows the context breakdown as a toast.
 - The band yields to surveys and stacks with the band of any other mod.
 
-The engine sends rate limits, context and cost to the mod. Git, GitHub and vault data come from `git`, `gh` and the file system. The mod caches GitHub data for 5 minutes.
+The engine sends rate limits, context and cost to the mod, and the mod reads live usage itself. Git, GitHub and vault data come from `git`, `gh` and the file system. The mod caches GitHub data for 5 minutes.
 
 ## Rate limits
 
-The engine reads rate limits from API response headers and pushes them after each turn, so the mod does not poll them. Two gaps stay open between responses, and the mod closes both:
+The engine pushes rate limits from API response headers after each turn. The mod also reads `GET https://api.anthropic.com/api/oauth/usage` at startup and every 5 minutes, so the band shows usage from other sessions without a request. The mod signs the read through `$.session.authorize()` and never sees the token.
 
+- Press the reset time of either window to read usage now. The arrow turns to `◐` while the read runs. A press has a 30-second cooldown.
+- The 7d hover card lists the model-scoped weekly limits from the same response.
 - A window past its reset time shows as 0% within 60 seconds, with no request.
-- A fresh session has no reading until its first response. The mod saves each new reading in its plugin store under `limits:<account email>`. A fresh session draws that reading, rolled over to the current time.
+- The mod saves each new reading in its plugin store under `limits:<account email>`. A fresh session draws that reading, rolled over to the current time, until its first read returns.
 
-The band shows usage from other sessions only after this session sends a request.
+## Outage badge
+
+Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.json`. While an incident is open, the header shows `o: ⚠ <impact>`. The badge is Blonde for a minor incident and Error for a major one. `+N` counts the other open incidents. Press `ctrl+x tab`, then `o`, or click the badge to open the status page.
+
+## /clear
+
+A `/clear` keeps the process, starts a new session id and fires no `session.start`. The mod reseeds its state on the next draw after a `/clear` or a resume, so the band draws in full at once.
 
 ## Prompt cache warning
 

@@ -7,6 +7,7 @@
 //    reading of any session lives in $.store, and withSaved fills it in.
 
 import type { StatuslineUsage, StatuslineWindow } from '../types'
+import type { OAuthLimits } from './oauth'
 
 // The $.store key of the last reading. Each account has its own limits, so
 // the key names the account.
@@ -65,4 +66,16 @@ export function parseSaved(v: unknown): SavedLimits | null {
   const sevenDay = parseWindow(s.sevenDay)
   if (fiveHour === undefined && sevenDay === undefined) return null
   return { at: s.at, fiveHour, sevenDay }
+}
+
+// The usage with a reading of the OAuth usage endpoint laid over it. The
+// context figures stay the engine's. A window the endpoint left out keeps
+// its last value.
+export function withOAuth(prev: StatuslineUsage | null, l: OAuthLimits, now: number): StatuslineUsage {
+  return rollUsage({
+    ...(prev ?? { ctxWindow: 0 }),
+    fiveHour: l.fiveHour ?? prev?.fiveHour,
+    sevenDay: l.sevenDay ?? prev?.sevenDay,
+    scoped: l.scoped,
+  }, now)
 }

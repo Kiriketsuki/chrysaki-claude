@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
-import { dashes } from '../hooks/ledger'
+import { planLedger, ruleText } from '../hooks/ledger'
 
 import { handoffPathFrom } from '../hooks/resume'
 
@@ -253,7 +253,7 @@ test('the resume key never writes over a draft', async ($, on) => {
   expect(r.filled).toEqual([])
 })
 
-test('the ledger opens each row with a jewel badge and draws no rule', async ($, on) => {
+test('the ledger opens each row with a jewel badge and parts its columns', async ($, on) => {
   answerMeasure(on)
   on('process.run', async (_$, e) => {
     const cmd = e.argv.join(' ')
@@ -269,8 +269,9 @@ test('the ledger opens each row with a jewel badge and draws no rule', async ($,
     expect((await ui.find({ type: 'Text', text: /▰ 5h|▱ 5h|◆ 5h/ }))?.props.backgroundColor).toBe('#14664e')
     expect((await ui.find({ type: 'Text', text: /⧗ cache/ }))?.props.backgroundColor).toBe('#583090')
     expect((await ui.find({ type: 'Text', text: /± diff/ }))?.props.backgroundColor).toBe('#9e2d6e')
-    // No dotted, dashed or box rule anywhere in the ledger.
-    expect(await ui.find({ type: 'Text', text: /[┊│┐└┘]/ })).toBeUndefined()
+    // A padded bar parts the columns. No dotted or box corner rule shows.
+    expect(await ui.find({ type: 'Text', text: '  │  ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /[┊┐└┘]/ })).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -279,11 +280,15 @@ test('the ledger opens each row with a jewel badge and draws no rule', async ($,
 test('a dashed rule parts the 5h row from the 7d row', { options: { ruleAnimation: 'off' } }, async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
-  for (const [columns, rules] of [[238, 1], [160, 3]] as const) {
+  for (const [columns, rules] of [[238, 1], [130, 3]] as const) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
-    const found = await ui.findAll({ type: 'Text', text: dashes(columns - 1) })
+    // A rule spans the band, so no bar or spacer matches. The header rule
+    // opens with a space, so it does not match either.
+    const found = await ui.findAll({ type: 'Text', text: /^─[─ ┼┴]{99,}$/ })
     expect(found.length).toBe(rules)
     expect(found[0]?.props.color).toBe('promptBorder')
+    // The first rule crosses each column separator.
+    expect(found[0]?.text).toContain('┼')
     await ui.unmount()
   }
 })
@@ -308,4 +313,19 @@ test('the animated rule runs a gradient that moves with the sweep', async ($, on
   const after = await colours()
   expect(after[0]).not.toBe(before[0])
   await ui.unmount()
+})
+
+test('the plan gives git the rest of a wide band and stacks it on a narrow one', async () => {
+  const wide = planLedger(237)
+  expect(wide.isInline).toBe(true)
+  expect(wide.bar).toBe(16)
+  const tight = planLedger(130)
+  expect(tight.isInline).toBe(false)
+  expect(tight.gitWidth).toBe(129)
+})
+
+test('a crossing on the rule always has a dash on each side', async () => {
+  expect(ruleText(9, [{ at: 2, glyph: '┼' }])).toBe('──┼── ── ')
+  expect(ruleText(9, [{ at: 5, glyph: '┼' }])).toBe('── ──┼── ')
+  expect(ruleText(6, [{ at: 5, glyph: '┴' }])).toBe('── ──┴')
 })

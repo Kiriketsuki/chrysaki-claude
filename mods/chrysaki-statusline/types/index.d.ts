@@ -15,6 +15,33 @@ export type StatuslineUsage = {
   sevenDay?: StatuslineWindow
   costUsd?: number
   startedAt?: number
+  // Weekly limits that cover one model, from the OAuth usage endpoint.
+  scoped?: StatuslineScopedLimit[]
+}
+
+export type StatuslineScopedLimit = {
+  // The model the limit covers, such as Fable.
+  label: string
+  percent: number
+  resetsAt?: number
+}
+
+// The last fetch of the OAuth usage endpoint.
+export type LimitsFetch = {
+  isBusy: boolean
+  // When the last fetch started, in epoch milliseconds.
+  at?: number
+  // Why the last fetch failed. Absent after a success.
+  error?: string
+}
+
+// The worst open incident on the Claude status page.
+export type StatuslineOutage = {
+  impact: 'minor' | 'major' | 'critical'
+  name: string
+  // Open incidents in all.
+  count: number
+  url: string
 }
 
 export type StatuslineIdentity = {
@@ -137,6 +164,8 @@ declare module 'claude-code' {
       hintOpen: boolean
       // The frame of the animated rule between ledger rows.
       sweep: number
+      limitsFetch: LimitsFetch
+      outage: StatuslineOutage | null
     }
   }
 }
