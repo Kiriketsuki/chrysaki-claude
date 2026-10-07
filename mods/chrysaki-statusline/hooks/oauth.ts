@@ -69,13 +69,3 @@ export function parseOAuthUsage(text: string): OAuthLimits | null {
   if (fiveHour === undefined && sevenDay === undefined) return null
   return { fiveHour, sevenDay, scoped: scopedOf(b.limits) }
 }
-
-// The shortest wait between two fetches the person starts by hand.
-export const MANUAL_COOLDOWN_MS = 30000
-
-// True when a fetch may start now. A timer fetch waits for none, because its
-// own period spaces it.
-export function mayFetch(lastAt: number | undefined, now: number, isManual: boolean): boolean {
-  if (!isManual || lastAt === undefined) return true
-  return now - lastAt >= MANUAL_COOLDOWN_MS
-}

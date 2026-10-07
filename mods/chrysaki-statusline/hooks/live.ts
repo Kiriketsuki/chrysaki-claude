@@ -6,7 +6,7 @@
 import type { HttpInit, HttpResponse } from 'claude-code'
 
 import type { LimitsFetch, StatuslineOutage } from '../types'
-import { MANUAL_COOLDOWN_MS, USAGE_HEADERS, USAGE_URL, mayFetch, parseOAuthUsage } from './oauth'
+import { USAGE_HEADERS, USAGE_URL, parseOAuthUsage } from './oauth'
 import type { OAuthLimits } from './oauth'
 import { STATUS_URL, parseIncidents } from './status'
 
@@ -55,8 +55,9 @@ async function readUsage(h: LiveHost): Promise<OAuthLimits> {
   return parsed
 }
 
-// Reads the rate-limit windows and hands them to `apply`. A press shows the
-// result as a toast. A timer read fails quietly to the debug log.
+// Reads the rate-limit windows and hands them to `apply`. A press always
+// reads now, unless a read is in flight. A press shows the result as a
+// toast. A timer read fails quietly to the debug log.
 export async function fetchLimits(
   h: LiveHost,
   isManual: boolean,
@@ -64,11 +65,6 @@ export async function fetchLimits(
 ): Promise<void> {
   const [state, now] = await Promise.all([h.getFetch(), h.now()])
   if (state.isBusy && state.at !== undefined && now - state.at < BUSY_STALE_MS) return
-  if (!mayFetch(state.at, now, isManual)) {
-    const wait = Math.ceil((MANUAL_COOLDOWN_MS - (now - (state.at ?? now))) / 1000)
-    h.toast(`Usage was read moments ago. Press again in ${wait} s.`)
-    return
-  }
   await h.setFetch({ isBusy: true, at: now })
   try {
     const limits = await readUsage(h)
