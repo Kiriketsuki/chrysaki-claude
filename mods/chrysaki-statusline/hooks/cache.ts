@@ -6,6 +6,8 @@
 // resets the TTL, and the lifetime counts from the start of the request.
 // After expiry the next request writes the whole prefix again.
 
+import type { ProcessRunInit, ProcessRunResult } from 'claude-code'
+
 import type { CacheAlert, CacheTone, CacheView, StatuslineCache } from '../types'
 import { ROLE } from './palette'
 
@@ -159,4 +161,58 @@ export function cacheCard(c: StatuslineCache, view: CacheView): string {
   if (c.lastMissCause) bits.push(`last miss: ${c.lastMissCause}`)
   if (c.source === 'inferred') bits.push('estimated from turn timing')
   return bits.join(' · ')
+}
+
+// What readCacheFile needs from the engine. register.tsx builds it, because
+// the engine interface cannot cross an import.
+export type CacheFileHost = {
+  sessionId: () => Promise<string>
+  runtimeDir: () => Promise<string | undefined>
+  readFile: (path: string) => Promise<string>
+  run: (argv: string[], init: ProcessRunInit) => Promise<ProcessRunResult>
+  // Writes a line the person sees in the transcript.
+  report: (text: string) => void
+  fail: (error: unknown) => void
+}
+
+// The first failure of a load goes to the transcript once, with its reason,
+// so a missing segment always has a visible cause.
+let hasReportedCacheRead = false
+
+function why(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+// Source 1: the statusLine stdin JSON that statusline-command.sh writes for
+// this session. Null when the file is missing or holds no prompt_cache.
+// The engine's file read goes first. When it refuses, `cat` reads the file.
+export async function readCacheFile(host: CacheFileHost): Promise<StatuslineCache | null> {
+  let path: string
+  try {
+    const [id, runtime] = await Promise.all([host.sessionId(), host.runtimeDir()])
+    path = `${runtime ?? '/tmp'}/chrysaki-statusline/${id}.json`
+  } catch (error) {
+    host.fail(error)
+    return null
+  }
+  let text: string | null = null
+  let reason = ''
+  try {
+    text = await host.readFile(path)
+  } catch (error) {
+    reason = `fs.read: ${why(error)}`
+    try {
+      const r = await host.run(['cat', path], { timeoutMs: 3000 })
+      if (r.exitCode === 0) text = r.stdout
+      else reason += `, cat exited ${r.exitCode}: ${r.stderr.trim()}`
+    } catch (catError) {
+      reason += `, cat: ${why(catError)}`
+    }
+  }
+  const parsed = text === null ? null : parseStatuslineCache(text)
+  if (parsed === null && !hasReportedCacheRead) {
+    hasReportedCacheRead = true
+    host.report(`cache segment has no data from ${path} (${text === null ? reason : 'the file holds no prompt_cache'})`)
+  }
+  return parsed
 }

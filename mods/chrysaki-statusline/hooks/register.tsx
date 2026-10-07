@@ -1,17 +1,20 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderSurface } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
-import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, parseStatuslineCache } from './cache'
-import type { AlertAction } from './cache'
-import { readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
+import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
+import type { AlertAction, CacheFileHost } from './cache'
+import { mergeIdentity, readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
 import type { Host } from './collect'
 import { drawBand } from './draw'
 import { SWEEP_FRAMES } from './ledger'
 import type { BarStyle } from './format'
 import { kilo } from './format'
-import { limitsKey, parseSaved, rollUsage, toSaved, withSaved } from './limits'
+import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from './limits'
+import { LIVE_MS, fetchLimits, fetchOutage } from './live'
+import type { LiveHost } from './live'
+import type { OAuthLimits } from './oauth'
 import { HANDOFF_FILE, handoffPathFrom, resumeCommand } from './resume'
 
 export { HANDOFF_FILE }
@@ -34,6 +37,8 @@ const accountMenu = atom({ plugin: 'chrysaki-statusline', key: 'accountMenu' } a
 const login = atom({ plugin: 'chrysaki-statusline', key: 'login' } as const, null as PendingLogin | null)
 const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as const, false)
 const sweep = atom({ plugin: 'chrysaki-statusline', key: 'sweep' } as const, 0)
+const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
+const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
 
 // The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
 const SWEEP_MS = 150
@@ -73,9 +78,16 @@ function hostOf($: EngineInterface): Host {
   }
 }
 
+// The last identity any session of this process read. After a /clear the
+// new session starts with empty state, and the band draws this one until its
+// own read lands, so the header never shows empty.
+let lastIdentity: StatuslineIdentity | null = null
+
 async function refreshLocal($: EngineInterface): Promise<void> {
   const host = hostOf($)
-  const id = await readIdentity(host)
+  const read_ = await readIdentity(host)
+  const id = mergeIdentity(read_, (await read($, identity)) ?? lastIdentity)
+  lastIdentity = id
   await update($, identity, () => id)
   const [g, n] = await Promise.all([readGit(host, id.cwd), readInbox(host, id.cwd)])
   await update($, git, () => g)
@@ -113,6 +125,37 @@ async function seedUsage($: EngineInterface): Promise<void> {
   } catch (error) {
     logFailure($, error)
   }
+}
+
+// Puts a reading of the OAuth usage endpoint into the band and saves it for
+// the next session. The context figures stay the engine's.
+async function applyLimits($: EngineInterface, l: OAuthLimits, now: number): Promise<void> {
+  await update($, usage, prev => withOAuth(prev, l, now))
+  const u = await read($, usage)
+  if (u !== null) await saveLimits($, u)
+}
+
+function liveHostOf($: EngineInterface): LiveHost {
+  return {
+    now: async () => $.clock.now(),
+    authorize: async () => (await $.session.authorize())?.handle ?? null,
+    fetch: async (url, init) => $.http.fetch(url, init),
+    after: (ms, fn) => $.clock.after(ms, fn),
+    toast: text => { $.ui.toast(text) },
+    log: text => { $.ui.log(`chrysaki-statusline: ${text}`, { to: 'debug' }) },
+    getFetch: async () => read($, limitsFetch),
+    setFetch: async v => { await update($, limitsFetch, () => v) },
+    getOutage: async () => read($, outage),
+    setOutage: async v => { await update($, outage, () => v) },
+  }
+}
+
+function refreshLimits($: EngineInterface, isManual: boolean): Promise<void> {
+  return fetchLimits(liveHostOf($), isManual, (l, now) => applyLimits($, l, now))
+}
+
+function refreshOutage($: EngineInterface): Promise<void> {
+  return fetchOutage(liveHostOf($))
 }
 
 // Shows a window as reset once its reset time passes. No request is needed.
@@ -162,43 +205,16 @@ async function refreshSlow($: EngineInterface, isRemoteForced: boolean): Promise
   }
 }
 
-// Source 1: the statusLine stdin JSON that statusline-command.sh writes for
-// this session. Null when the file is missing or holds no prompt_cache.
-// $.fs reads it first. When $.fs refuses, `cat` through the host reads it.
-// The first failure of a load goes to the transcript once, with its reason,
-// so a missing segment always has a visible cause.
-let hasReportedCacheRead = false
-
-async function readCacheFile($: EngineInterface): Promise<StatuslineCache | null> {
-  let path: string
-  try {
-    const [id, runtime] = await Promise.all([$.session.id(), $.env.get('XDG_RUNTIME_DIR')])
-    path = `${runtime ?? '/tmp'}/chrysaki-statusline/${id}.json`
-  } catch (error) {
-    logFailure($, error)
-    return null
+// Source 1: the statusLine stdin JSON. See readCacheFile in cache.ts.
+function cacheHostOf($: EngineInterface): CacheFileHost {
+  return {
+    sessionId: async () => $.session.id(),
+    runtimeDir: async () => $.env.get('XDG_RUNTIME_DIR'),
+    readFile: async path => $.fs.read(path),
+    run: async (argv, init) => $.process.run(argv, init),
+    report: text => { $.ui.log(`chrysaki-statusline: ${text}`, { to: 'transcript' }) },
+    fail: error => logFailure($, error),
   }
-  let text: string | null = null
-  let reason = ''
-  try {
-    text = await $.fs.read(path)
-  } catch (error) {
-    reason = `fs.read: ${error instanceof Error ? error.message : String(error)}`
-    try {
-      const r = await $.process.run(['cat', path], { timeoutMs: 3000 })
-      if (r.exitCode === 0) text = r.stdout
-      else reason += `; cat exited ${r.exitCode}: ${r.stderr.trim()}`
-    } catch (catError) {
-      reason += `; cat: ${catError instanceof Error ? catError.message : String(catError)}`
-    }
-  }
-  const parsed = text === null ? null : parseStatuslineCache(text)
-  if (parsed === null && !hasReportedCacheRead) {
-    hasReportedCacheRead = true
-    const why = text === null ? reason : 'the file holds no prompt_cache'
-    $.ui.log(`chrysaki-statusline: cache segment has no data from ${path} (${why})`, { to: 'transcript' })
-  }
-  return parsed
 }
 
 // Source 2: the TTL from the documented overrides, the settings and the plan.
@@ -231,7 +247,7 @@ async function sendAlert($: EngineInterface, action: AlertAction, config: CacheC
 // Recomputes the segment. It writes state only when the shown value changes,
 // and it raises at most one alert per warm period.
 async function tickCache($: EngineInterface, config: CacheConfig, isTurnRunning: boolean): Promise<void> {
-  const fromFile = await readCacheFile($)
+  const fromFile = await readCacheFile(cacheHostOf($))
   if (fromFile !== null) {
     const prev = await read($, cache)
     if (JSON.stringify(prev) !== JSON.stringify(fromFile)) await update($, cache, () => fromFile)
@@ -519,9 +535,24 @@ async function toggleHint($: EngineInterface): Promise<void> {
   await $.store.set(HINT_OPEN_KEY, next).catch(error => logFailure($, error))
 }
 
-// The ctx button: the largest used categories, as /context lists them.
+// The outage badge opens the incident page in the browser.
+async function openOutage($: EngineInterface, o: StatuslineOutage | null): Promise<void> {
+  if (o === null) return
+  try {
+    await $.process.run(['xdg-open', o.url], { timeoutMs: 5000 })
+  } catch {
+    $.ui.toast(`${o.name}: ${o.url}`, { timeoutMs: 10000 })
+  }
+}
+
+// The ctx button: the context tab of the chrysaki-insight pane when that mod
+// is loaded. Without it, a toast of the largest used categories.
 async function toastBreakdown($: EngineInterface): Promise<void> {
   try {
+    if ((await $.command.list()).some(c => c.name === 'insight')) {
+      await $.command.run({ command: 'insight', args: 'context' })
+      return
+    }
     const u = await $.session.usage({ breakdown: 'summary' })
     const rows = (u.context.breakdown?.categories ?? [])
       .filter(c => c.kind === 'used')
@@ -532,6 +563,54 @@ async function toastBreakdown($: EngineInterface): Promise<void> {
   } catch (error) {
     $.ui.toast(`Context breakdown failed: ${error instanceof Error ? error.message : String(error)}`)
   }
+}
+
+// What startup needs from the closure of register: the options and the
+// flags the hooks keep.
+type Runtime = {
+  cacheConfig: CacheConfig
+  isAnimated: boolean
+  isRuleAnimated: boolean
+  // Reads and clears the flag that forces the next GitHub read.
+  takeRemoteDue: () => boolean
+  isTurnRunning: () => boolean
+}
+
+// Reads every value the band draws and starts the timers. session.start
+// runs it, and so does the first draw after a /clear. It cancels the timers
+// of the last run and returns the new ones, so a reseed never doubles them.
+function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[] {
+  for (const t of old) t.cancel()
+  $.clock.after(0, () => { void loadAccounts($).catch(error => logFailure($, error)) })
+  $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
+  $.clock.after(0, () => {
+    void refreshFast($)
+      .then(() => seedUsage($))
+      .then(() => refreshLimits($, false))
+      .then(() => refreshRemote($, true))
+      .catch(error => logFailure($, error))
+  })
+  $.clock.after(0, () => { void refreshOutage($) })
+  $.clock.after(0, () => { void refreshGitCommand($).then(() => tickCache($, rt.cacheConfig, rt.isTurnRunning())) })
+  // The resume key looks at the clipboard on the same clock as the cache.
+  $.clock.after(0, () => { void refreshResume($) })
+  return [
+    $.clock.every(REFRESH_MS, () => {
+      const isForced = rt.takeRemoteDue()
+      void rollLimits($)
+      void refreshSlow($, isForced).then(() => refreshGitCommand($))
+    }),
+    // The usage endpoint and the status page answer without a turn, so an
+    // idle session stays current too.
+    $.clock.every(LIVE_MS, () => {
+      void refreshLimits($, false)
+      void refreshOutage($)
+    }),
+    $.clock.every(CACHE_TICK_MS, () => { void tickCache($, rt.cacheConfig, rt.isTurnRunning()) }),
+    $.clock.every(CACHE_TICK_MS, () => { void refreshResume($) }),
+    ...(rt.isAnimated ? [$.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })] : []),
+    ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void update($, sweep, n => (n + 1) % SWEEP_FRAMES) })] : []),
+  ]
 }
 
 export const register: Register = (on, options) => {
@@ -551,32 +630,37 @@ export const register: Register = (on, options) => {
     isDesktopNotify: String(options.desktopNotify ?? 'on') === 'on',
   }
 
+  // The repeating timers of the current session. A start cancels the last
+  // set, so a reseed after /clear never doubles them.
+  let clocks: Timer[] = []
+  // Set when a /clear or a resume ends the session. No session.start fires
+  // for the next one, so the band's next draw starts it.
+  let isReseedDue = false
+  let reseedAt = 0
+  const rt: Runtime = {
+    cacheConfig,
+    isAnimated,
+    isRuleAnimated,
+    takeRemoteDue: () => {
+      const was = isRemoteDue
+      isRemoteDue = false
+      return was
+    },
+    isTurnRunning: () => isTurnRunning,
+  }
+
   on('session.start', async ($, e, next) => {
     const done = await next(e)
     // The bash statusline reads this and prints nothing while the mod draws.
     await $.env.set('CHRYSAKI_STATUSLINE_MOD', '1')
-    $.clock.after(0, () => { void loadAccounts($).catch(error => logFailure($, error)) })
-    $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
-    $.clock.after(0, () => {
-      void refreshFast($)
-        .then(() => seedUsage($))
-        .then(() => refreshRemote($, true))
-        .catch(error => logFailure($, error))
-    })
-    $.clock.every(REFRESH_MS, () => {
-      const isForced = isRemoteDue
-      isRemoteDue = false
-      void rollLimits($)
-      void refreshSlow($, isForced).then(() => refreshGitCommand($))
-    })
-    $.clock.after(0, () => { void refreshGitCommand($).then(() => tickCache($, cacheConfig, isTurnRunning)) })
-    $.clock.every(CACHE_TICK_MS, () => { void tickCache($, cacheConfig, isTurnRunning) })
-    // The resume key looks at the clipboard on the same clock as the cache.
-    $.clock.after(0, () => { void refreshResume($) })
-    $.clock.every(CACHE_TICK_MS, () => { void refreshResume($) })
-    if (isAnimated) $.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })
-    if (isRuleAnimated) $.clock.every(SWEEP_MS, () => { void update($, sweep, n => (n + 1) % SWEEP_FRAMES) })
+    isReseedDue = false
+    clocks = startup($, rt, clocks)
     return done
+  })
+
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') isReseedDue = true
+    return next(e)
   })
 
   // The engine pushes context, rate-limit and cost figures here after each turn.
@@ -671,8 +755,21 @@ export const register: Register = (on, options) => {
     const [accountList, profileList, menu, pendingLogin, isHintOpen] = await Promise.all([
       read($, accounts), read($, profiles), read($, accountMenu), read($, login), read($, hintOpen),
     ])
+    // The first draw of a session after a /clear finds empty state. It starts
+    // the reads itself, at most once in 10 seconds, and draws the last known
+    // identity meanwhile.
+    if ((isReseedDue || id === null) && now - reseedAt > 10000) {
+      isReseedDue = false
+      reseedAt = now
+      clocks = startup($, rt, clocks)
+    }
+    const [fetchState, down] = await Promise.all([read($, limitsFetch), read($, outage)])
     const band = drawBand(table, {
-      usage: u, identity: id, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
+      usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
+      isLimitsBusy: fetchState.isBusy,
+      onRefreshLimits: () => { void refreshLimits($, true) },
+      outage: down,
+      onOutage: () => { void openOutage($, down) },
       columns: e.props.bodyColumns, barStyle, isRuleAnimated, sweep: isRuleAnimated ? await read($, sweep) : 0, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,

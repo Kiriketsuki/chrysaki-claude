@@ -7,7 +7,7 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { AccountMenu, CacheView, FirefoxProfile, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, StatuslineAccount, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
@@ -34,6 +34,12 @@ export type BandData = {
   isRuleAnimated: boolean
   sweep: number
   usdToSgd: number
+  // A read of the OAuth usage endpoint: in flight, and the press that starts one.
+  isLimitsBusy: boolean
+  onRefreshLimits: () => void
+  // The worst open incident on the status page, and the press that opens it.
+  outage: StatuslineOutage | null
+  onOutage: () => void
   onContext: () => void
   cache: StatuslineCache | null
   cacheView: CacheView | null
@@ -76,9 +82,11 @@ const HOURGLASS = '⧗'
 
 // --- Segments ------------------------------------------------------------------
 
-// A header segment. `text` gives the width. `iconFg` colours the glyph before
-// the first space. A segment with `press` draws its label as a plain Button on
-// the segment's ground.
+// A header segment. `text` gives the width, so a pressable segment's text
+// carries the `x: ` mark the painter adds before a hotkey. `iconFg` colours
+// the glyph before the first space. A segment with `press` draws its label as
+// a plain Button on the segment's ground. A segment with `drop` leaves when
+// the header runs out of room, the lowest rank first.
 type Seg = {
   text: string
   bg: string
@@ -86,6 +94,7 @@ type Seg = {
   bold?: boolean
   iconFg?: string
   press?: { key: string; label: string; hotkey: string; onPress: () => void }
+  drop?: number
 }
 
 function segBody(T: Table, s: Seg): RenderElement {
@@ -109,8 +118,25 @@ function segBody(T: Table, s: Seg): RenderElement {
   )
 }
 
-function segWidth(segs: readonly Seg[]): number {
+function segWidth(segs: readonly { text: string }[]): number {
   return segs.reduce((n, s) => n + s.text.length + 3, 0)
+}
+
+// The rule between the two runs keeps at least this many cells.
+const MIN_RULE = 3
+
+// Both runs, with the droppable segments taken out by rank until they fit in
+// `room` cells. A segment wider than its share wraps and doubles the header.
+export function fitSegs<S extends { text: string; drop?: number }>(left: readonly S[], right: readonly S[], room: number): [S[], S[]] {
+  const ranks = [...new Set([...left, ...right].flatMap(s => (s.drop === undefined ? [] : [s.drop])))].sort((a, b) => a - b)
+  let l = [...left]
+  let r = [...right]
+  for (const rank of ranks) {
+    if (segWidth(l) + segWidth(r) <= room) break
+    l = l.filter(s => s.drop !== rank)
+    r = r.filter(s => s.drop !== rank)
+  }
+  return [l, r]
 }
 
 // A zigzag-alt run read left to right: each segment, then the glyph that
@@ -155,8 +181,8 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const u = d.usage
   const left: Seg[] = [
     { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt },
-    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.blueLight, fg: ROLE.text }] : []),
-    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true }] : []),
+    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.blueLight, fg: ROLE.text, drop: 1 }] : []),
+    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true, drop: 3 }] : []),
   ]
   const email = id?.email ?? ''
   // The account list knows the work accounts. The config folder is the guess
@@ -168,24 +194,36 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     fg: ROLE.text,
     bold: true,
     press: { key: 'account', label: email, hotkey: 'a', onPress: d.onAccounts },
+    drop: 4,
   }
+  const o = d.outage
+  const outageLabel = o === null ? '' : `⚠ ${o.impact}${o.count > 1 ? ` +${o.count - 1}` : ''}`
+  const outageSeg: Seg[] = o === null ? [] : [{
+    text: `o: ${outageLabel}`,
+    bg: o.impact === 'minor' ? CORE.blonde : CORE.error,
+    fg: o.impact === 'minor' ? CORE.abyss : ROLE.text,
+    bold: true,
+    press: { key: 'outage', label: outageLabel, hotkey: 'o', onPress: d.onOutage },
+  }]
   const right: Seg[] = [
+    ...outageSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),
-    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text }]),
+    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text, drop: 2 }]),
     ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
   // The chevron opens the hint drawer under the prompt. It takes one cell, and
   // the brand segment brings its own leading space.
   const chevron = 1
-  const room = Math.max(0, inner - chevron - segWidth(left) - segWidth(right) - 2)
+  const [fitLeft, fitRight] = fitSegs(left, right, inner - chevron - 2 - MIN_RULE)
+  const room = Math.max(0, inner - chevron - segWidth(fitLeft) - segWidth(fitRight) - 2)
   return (
     <Box key="header">
       <Button key="hint-toggle" label={d.isHintOpen ? '▾' : '▸'} plain onPress={d.onToggleHint} />
-      {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, left))}
+      {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, fitLeft))}
       <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
-      {right.length > 0
-        ? hoverGroup(T, 'cost', u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`, mirrored(T, right))
+      {fitRight.length > 0
+        ? hoverGroup(T, 'cost', u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`, mirrored(T, fitRight))
         : <Text />}
     </Box>
   )

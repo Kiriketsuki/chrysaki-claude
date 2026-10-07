@@ -62,6 +62,19 @@ export function usageFromMeasure(e: SessionMeasureInput, previous: StatuslineUsa
   return { ...u, fiveHour: u.fiveHour ?? previous?.fiveHour, sevenDay: u.sevenDay ?? previous?.sevenDay, startedAt: previous?.startedAt }
 }
 
+// A field the engine could not answer keeps its last value. Right after a
+// /clear a read can come back empty for a moment.
+export function mergeIdentity(next: StatuslineIdentity, prev: StatuslineIdentity | null): StatuslineIdentity {
+  if (prev === null) return next
+  return {
+    ...next,
+    model: next.model || prev.model,
+    version: next.version || prev.version,
+    cwd: next.cwd || prev.cwd,
+    email: next.email === 'unknown' ? prev.email : next.email,
+  }
+}
+
 export async function readIdentity(host: Host): Promise<StatuslineIdentity> {
   const [model, version, cwd, home, configDir] = await Promise.all([
     host.model().catch(() => ''),
