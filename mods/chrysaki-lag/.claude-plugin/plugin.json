@@ -1,0 +1,42 @@
+{
+  "name": "chrysaki-lag",
+  "version": "0.1.0",
+  "description": "Shows why the machine lags, from pressure stall data, and stops a cause on request",
+  "author": {
+    "name": "Kiriketsuki"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "busyAt": {
+      "type": "string",
+      "title": "Busy at",
+      "description": "The pressure share, in percent over 10 s, at which any resource makes the machine busy",
+      "default": "10"
+    },
+    "ioLaggyAt": {
+      "type": "string",
+      "title": "Disk laggy at",
+      "description": "The IO pressure share, in percent over 10 s, at which the machine is laggy",
+      "default": "25"
+    },
+    "memoryLaggyAt": {
+      "type": "string",
+      "title": "Memory laggy at",
+      "description": "The memory pressure share, in percent over 10 s, at which the machine is laggy",
+      "default": "15"
+    },
+    "cpuLaggyAt": {
+      "type": "string",
+      "title": "CPU laggy at",
+      "description": "The CPU pressure share, in percent over 10 s, at which the machine is laggy",
+      "default": "40"
+    },
+    "desktopNotify": {
+      "type": "string",
+      "title": "Desktop notice",
+      "description": "Send a notice through notify-send when the lag lasts a minute, at most once every 15 minutes",
+      "default": "on",
+      "options": ["on", "off"]
+    }
+  }
+}

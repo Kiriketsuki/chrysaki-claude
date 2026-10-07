@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Print one JSON snapshot of the machine for the chrysaki-lag mod.
+
+The plugin API reads one file per call, and a full scan reads about 3000
+files. This script reads them all in one run. The mod computes the rates
+from two snapshots, so this script only reports counters.
+
+Each proc row is:
+[pid, ppid, uid, state, comm, rss_kb, swap_kb, cpu_ticks, io_bytes, start_ticks]
+io_bytes is -1 where /proc/<pid>/io is not readable, which is the case for
+the processes of other users.
+"""
+
+import json
+import os
+import time
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def stat_fields(pid):
+    # The comm sits in parentheses and can hold spaces, so split after the last ')'.
+    text = read(f"/proc/{pid}/stat")
+    close = text.rfind(")")
+    if close < 0:
+        return None
+    comm = text[text.find("(") + 1 : close]
+    rest = text[close + 2 :].split()
+    # rest[0] is field 3 (state). utime and stime are fields 14 and 15, starttime is 22.
+    if len(rest) < 20:
+        return None
+    return comm, rest[0], int(rest[1]), int(rest[11]) + int(rest[12]), int(rest[19])
+
+
+def status_fields(pid):
+    uid, rss, swap = -1, 0, 0
+    for line in read(f"/proc/{pid}/status").splitlines():
+        if line.startswith("Uid:"):
+            uid = int(line.split()[1])
+        elif line.startswith("VmRSS:"):
+            rss = int(line.split()[1])
+        elif line.startswith("VmSwap:"):
+            swap = int(line.split()[1])
+    return uid, rss, swap
+
+
+def io_bytes(pid):
+    text = read(f"/proc/{pid}/io")
+    if not text:
+        return -1
+    total = 0
+    for line in text.splitlines():
+        if line.startswith(("read_bytes:", "write_bytes:")):
+            total += int(line.split()[1])
+    return total
+
+
+def ancestors():
+    # This script, its shell and the Claude Code process that ran it. A kill
+    # never targets one of these.
+    chain, pid = [], os.getpid()
+    while pid > 1 and len(chain) < 32:
+        chain.append(pid)
+        fields = stat_fields(pid)
+        if fields is None:
+            break
+        pid = fields[2]
+    return chain
+
+
+def main():
+    procs = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        fields = stat_fields(pid)
+        if fields is None:
+            continue
+        comm, state, ppid, ticks, start = fields
+        uid, rss, swap = status_fields(pid)
+        procs.append([pid, ppid, uid, state, comm, rss, swap, ticks, io_bytes(pid), start])
+    snapshot = {
+        "at": int(time.time() * 1000),
+        "hz": os.sysconf("SC_CLK_TCK"),
+        "ncpu": os.cpu_count() or 1,
+        "uid": os.getuid(),
+        "ancestors": ancestors(),
+        "pressure": {r: read(f"/proc/pressure/{r}") for r in ("cpu", "memory", "io")},
+        "meminfo": read("/proc/meminfo"),
+        "swaps": read("/proc/swaps"),
+        "procs": procs,
+    }
+    print(json.dumps(snapshot, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()
