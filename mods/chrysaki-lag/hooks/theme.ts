@@ -29,6 +29,7 @@ export const LEVEL_FILL: Record<Level, string> = { calm: C.emerald, busy: C.blon
 export const HEX = '⬢'
 export const HEX_HOLLOW = '⬡'
 export const RISE = '▲'
+export const WARN = '⚠'
 export const EDGE = ''
 export const BAR_FULL = '━'
 export const BAR_EMPTY = '─'

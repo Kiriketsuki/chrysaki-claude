@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Print one JSON health snapshot of the machine for the chrysaki-lag mod.
+
+The mod turns the raw values into warnings, so this script only reads them.
+It reads local file systems only. A statvfs call on a network mount can hang
+when the server is gone, and an autofs mount point mounts on access.
+"""
+
+import json
+import os
+import subprocess
+import time
+
+LOCAL_FS = {"ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "zfs", "bcachefs", "vfat", "exfat", "ntfs3"}
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def unescape(field):
+    # /proc/self/mounts writes a space as \040 and a tab as \011.
+    return field.replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\")
+
+
+def mounts(uid):
+    tmpfs_ok = {"/tmp", "/dev/shm", f"/run/user/{uid}"}
+    out, seen = [], set()
+    for line in read("/proc/self/mounts").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        source, target, fstype = unescape(parts[0]), unescape(parts[1]), parts[2]
+        if fstype not in LOCAL_FS and not (fstype == "tmpfs" and target in tmpfs_ok):
+            continue
+        try:
+            st = os.statvfs(target)
+            dev = os.stat(target).st_dev
+        except OSError:
+            continue
+        # A btrfs subvolume or a bind mount shows the same file system twice.
+        if dev in seen or st.f_blocks == 0:
+            continue
+        seen.add(dev)
+        out.append({
+            "target": target,
+            "fstype": fstype,
+            "source": source,
+            "sizeKb": st.f_blocks * st.f_frsize // 1024,
+            "usedKb": (st.f_blocks - st.f_bfree) * st.f_frsize // 1024,
+            "availKb": st.f_bavail * st.f_frsize // 1024,
+            "files": st.f_files,
+            "filesFree": st.f_ffree,
+        })
+    return out
+
+
+def meminfo():
+    out = {}
+    for line in read("/proc/meminfo").splitlines():
+        key, _, rest = line.partition(":")
+        if key in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
+            out[key] = int(rest.split()[0])
+    return out
+
+
+def oom_kills():
+    for line in read("/proc/vmstat").splitlines():
+        if line.startswith("oom_kill "):
+            return int(line.split()[1])
+    return None
+
+
+def millideg(path):
+    text = read(path).strip()
+    return int(text) / 1000 if text.lstrip("-").isdigit() else None
+
+
+def temps():
+    out = []
+    base = "/sys/class/hwmon"
+    for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        d = f"{base}/{name}"
+        chip = read(f"{d}/name").strip()
+        # The parent of the hwmon folder names the device, such as nvme1.
+        device = os.path.basename(os.path.dirname(os.path.realpath(d)))
+        for entry in sorted(os.listdir(d)):
+            if not (entry.startswith("temp") and entry.endswith("_input")):
+                continue
+            stem = entry[: -len("_input")]
+            value = millideg(f"{d}/{entry}")
+            if value is None:
+                continue
+            out.append({
+                "chip": chip,
+                "device": device,
+                "label": read(f"{d}/{stem}_label").strip(),
+                "c": value,
+                "maxC": millideg(f"{d}/{stem}_max"),
+                "critC": millideg(f"{d}/{stem}_crit"),
+            })
+    return out
+
+
+def batteries():
+    out = []
+    base = "/sys/class/power_supply"
+    for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        d = f"{base}/{name}"
+        if read(f"{d}/type").strip() != "Battery":
+            continue
+        cap = read(f"{d}/capacity").strip()
+        if cap.isdigit():
+            out.append({"name": name, "capacity": int(cap), "status": read(f"{d}/status").strip()})
+    return out
+
+
+def run(argv):
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def failed_units(scope):
+    text = run(["systemctl", scope, "--failed", "--no-legend", "--plain"])
+    if text is None:
+        return None
+    return [line.split()[0] for line in text.splitlines() if line.strip()]
+
+
+def ntp():
+    text = run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"])
+    return None if text is None else text.strip() == "yes"
+
+
+def zombies():
+    count, parents = 0, {}
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        text = read(f"/proc/{name}/stat")
+        close = text.rfind(")")
+        rest = text[close + 2 :].split() if close >= 0 else []
+        if len(rest) < 2 or rest[0] != "Z":
+            continue
+        count += 1
+        ppid = rest[1]
+        ptext = read(f"/proc/{ppid}/stat")
+        pcomm = ptext[ptext.find("(") + 1 : ptext.rfind(")")] if ")" in ptext else "?"
+        parents[pcomm] = parents.get(pcomm, 0) + 1
+    top = sorted(parents.items(), key=lambda kv: -kv[1])[:3]
+    return {"count": count, "parents": [k for k, _ in top]}
+
+
+def main():
+    uid = os.getuid()
+    release = os.uname().release
+    snapshot = {
+        "v": 1,
+        "at": int(time.time() * 1000),
+        "uid": uid,
+        "mounts": mounts(uid),
+        "mem": meminfo(),
+        "oomKills": oom_kills(),
+        "temps": temps(),
+        "batteries": batteries(),
+        "failed": {"system": failed_units("--system"), "user": failed_units("--user")},
+        "kernel": {"release": release, "hasModules": os.path.isdir(f"/usr/lib/modules/{release}")},
+        "zombies": zombies(),
+        "ntp": ntp(),
+    }
+    print(json.dumps(snapshot, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

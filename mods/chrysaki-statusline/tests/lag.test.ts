@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LAG_FRESH_MS, lagFrom } from '../hooks/lagfile'
+import { LAG_FRESH_MS, WARN_FRESH_MS, lagFrom, warnFrom } from '../hooks/lagfile'
 
 const PSI = (avg10: number) => ({ avg10, avg60: avg10, avg300: avg10 })
 
@@ -23,5 +23,24 @@ describe('the lag badge', () => {
     expect(lagFrom(file('calm', 1000), 1000)).toBe(null)
     expect(lagFrom(file('busy', 1000), 1000 + LAG_FRESH_MS + 1)).toBe(null)
     expect(lagFrom('{"v":1,"at":', 1000)).toBe(null)
+  })
+})
+
+describe('the warning badge', () => {
+  const warning = (short: string, level: string, isHidden = false) => ({ key: short, group: 'disk', level, short, text: `${short} text`, mark: `${short}|${level}|`, isHidden })
+
+  function file(at: number, healthAt: number, warnings: unknown[]): string {
+    return JSON.stringify({ v: 1, at, level: 'calm', bound: 'none', pressure: {}, top: [], health: { at: healthAt, warnings } })
+  }
+
+  test('a fresh check gives the worst shown warning and a count of the rest', async () => {
+    const list = [warning('/home 98%', 'crit'), warning('3 units', 'warn', true), warning('swap 85%', 'warn'), warning('cpu 96°C', 'warn')]
+    expect(warnFrom(file(1000, 1000, list), 1000)).toEqual({ level: 'crit', short: '/home 98%', more: 2 })
+  })
+
+  test('hidden warnings, a stale check and a file from an older build give no badge', async () => {
+    expect(warnFrom(file(1000, 1000, [warning('3 units', 'warn', true)]), 1000)).toBe(null)
+    expect(warnFrom(file(1000 + WARN_FRESH_MS, 1000, [warning('3 units', 'warn')]), 1001 + WARN_FRESH_MS)).toBe(null)
+    expect(warnFrom(JSON.stringify({ v: 1, at: 1000, level: 'calm' }), 1000)).toBe(null)
   })
 })

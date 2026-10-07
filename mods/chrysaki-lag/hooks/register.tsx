@@ -1,15 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Cause, LagArmed, LagView } from '../types'
+import type { Bound, Cause, LagArmed, LagView, Warning } from '../types'
 import { parseDockerStats, parseSnapshot, rankCauses } from './causes'
 import type { Container, Snapshot } from './causes'
+import { healthStep } from './checkup'
+import type { CheckupHost } from './checkup'
+import { limitsFrom } from './health'
+import type { Limits } from './health'
 import { parseStat, parseUid, stopCause } from './kill'
 import type { KillHost } from './kill'
 import { parsePressure, parseSwaps, thresholdsFrom, verdict } from './pressure'
 import type { Pressure, Swap, Thresholds } from './pressure'
-import { filePath, isNoticeDue, isSampleDue, parseLagFile } from './shared'
-import type { LagFile, LagTop } from './shared'
+import { HIDDEN_NAME, filePath, isNoticeDue, isSampleDue, parseHidden, parseLagFile, toggleHidden, warnNoticesDue, withNotified } from './shared'
+import type { HealthFile, LagFile, LagTop } from './shared'
 import { CONFIRM_MS, lagPane } from './view'
 import type { Act } from './view'
 
@@ -29,7 +33,7 @@ const PAIR_MAX_MS = 30000
 // The desktop notice waits this long for a click: the $.process.run maximum.
 const NOTICE_WAIT_MS = 600000
 
-type Config = { thresholds: Thresholds; isNotify: boolean }
+type Config = { thresholds: Thresholds; limits: Limits; isNotify: boolean; isWarnNotify: boolean }
 
 // Module state. A reload clears it, which costs one sample without rates.
 let prevSnap: Snapshot | null = null
@@ -48,6 +52,27 @@ function log($: EngineInterface, text: string): void {
 
 async function stateFile($: EngineInterface): Promise<string> {
   return filePath(await $.env.get('XDG_RUNTIME_DIR'))
+}
+
+async function hiddenFile($: EngineInterface): Promise<string> {
+  return filePath(await $.env.get('XDG_RUNTIME_DIR'), HIDDEN_NAME)
+}
+
+async function readHiddenText($: EngineInterface): Promise<string | null> {
+  const text = await $.fs.read(await hiddenFile($)).catch(() => null)
+  return typeof text === 'string' ? text : null
+}
+
+function checkupHostOf($: EngineInterface): CheckupHost {
+  return {
+    run: async (argv, timeoutMs) => {
+      const r = await $.process.run(argv, { timeoutMs }).catch(() => null)
+      return r === null ? null : { exitCode: r.exitCode, stdout: r.stdout }
+    },
+    readHidden: () => readHiddenText($),
+    log: text => log($, text),
+    root: $.plugin.root,
+  }
 }
 
 async function readShared($: EngineInterface): Promise<LagFile | null> {
@@ -84,7 +109,7 @@ async function fullSample($: EngineInterface, cfg: Config): Promise<LagView | nu
   const causes = rankCauses(v.level === 'calm' ? 'none' : v.bound, snap, isPair ? prevSnap : null, containers, isPair ? prevContainers : null)
   prevSnap = snap
   prevContainers = containers
-  return { at: snap.at, level: v.level, bound: v.bound, pressure, swap: parseSwaps(snap.swaps), causes, hasDocker, note: null }
+  return { at: snap.at, level: v.level, bound: v.bound, pressure, swap: parseSwaps(snap.swaps), causes, warnings: [], hasDocker, note: null }
 }
 
 async function writeShared($: EngineInterface, f: LagFile): Promise<void> {
@@ -95,17 +120,33 @@ function topOf(causes: readonly Cause[]): LagTop[] {
   return causes.slice(0, 3).map(c => ({ label: c.label, detail: c.detail }))
 }
 
-// The desktop notice. It waits for a click, and `open` opens the pane in
-// this session.
-async function notify($: EngineInterface, f: LagFile): Promise<void> {
-  const title = `Machine ${f.level}: ${f.bound === 'none' ? 'no clear cause' : `${f.bound}-bound`}`
-  const body = f.top.length === 0 ? 'No process stands out.' : f.top.slice(0, 2).map(t => `${t.label}: ${t.detail}`).join('\n')
+// A desktop notice. It waits for a click, and `open` opens the pane in this
+// session.
+async function notice($: EngineInterface, title: string, body: string): Promise<void> {
   try {
     const r = await $.process.run([`${$.plugin.root}/bin/lag-notify`, title, body], { timeoutMs: NOTICE_WAIT_MS })
     if (r.stdout.trim() === 'open') await openPane($, null)
   } catch (error) {
     log($, `notice ended: ${message(error)}`)
   }
+}
+
+function lagNotice($: EngineInterface, f: LagFile): Promise<void> {
+  const title = `Machine ${f.level}: ${f.bound === 'none' ? 'no clear cause' : `${f.bound}-bound`}`
+  const body = f.top.length === 0 ? 'No process stands out.' : f.top.slice(0, 2).map(t => `${t.label}: ${t.detail}`).join('\n')
+  return notice($, title, body)
+}
+
+function warnNotice($: EngineInterface, due: readonly Warning[]): Promise<void> {
+  return notice($, `Machine warning: ${due[0]?.short ?? ''}`, due.slice(0, 3).map(w => w.text).join('\n'))
+}
+
+// The health file for this sample, with the notice times of `due` added.
+async function healthFor($: EngineInterface, cfg: Config, file: LagFile | null, now: number, bound: Bound): Promise<{ health: HealthFile | null; due: Warning[] }> {
+  const health = await healthStep(checkupHostOf($), file?.health ?? null, now, cfg.limits, bound)
+  if (health === null) return { health, due: [] }
+  const due = cfg.isWarnNotify ? warnNoticesDue(health, now) : []
+  return { health: due.length === 0 ? health : { ...health, notified: withNotified(health.notified, due.map(w => w.key), now) }, due }
 }
 
 // The ten-second tick. The session that finds the file stale samples and
@@ -117,19 +158,21 @@ async function tick($: EngineInterface, cfg: Config): Promise<void> {
   try {
     const light = await lightSample($)
     const v = verdict(light.pressure, cfg.thresholds)
+    const { health, due } = await healthFor($, cfg, file, now, v.bound)
     const base: LagFile = {
       v: 1, at: now, level: v.level, bound: v.bound, pressure: light.pressure, swap: light.swap,
       top: file?.top ?? [], topAt: file?.topAt ?? 0, notifiedAt: file?.notifiedAt ?? 0, writer: me,
+      ...(health === null ? {} : { health }),
     }
-    if (!(cfg.isNotify && v.level === 'laggy' && v.isSustained && isNoticeDue(file, now))) {
-      await writeShared($, base)
-      return
-    }
-    const full = await fullSample($, cfg)
-    const next = { ...base, top: full === null ? base.top : topOf(full.causes), topAt: now, notifiedAt: now }
+    const isLagNotice = cfg.isNotify && v.level === 'laggy' && v.isSustained && isNoticeDue(file, now)
+    const full = isLagNotice ? await fullSample($, cfg) : null
+    const next = isLagNotice ? { ...base, top: full === null ? base.top : topOf(full.causes), topAt: now, notifiedAt: now } : base
     await writeShared($, next)
-    // Two sessions can sample in the same moment. The last writer sends the notice.
-    if ((await readShared($))?.writer === me) void notify($, next)
+    if (!isLagNotice && due.length === 0) return
+    // Two sessions can sample in the same moment. The last writer sends the notices.
+    if ((await readShared($))?.writer !== me) return
+    if (isLagNotice) void lagNotice($, next)
+    if (due.length > 0) void warnNotice($, due)
   } finally {
     isSampling = false
   }
@@ -145,11 +188,14 @@ async function paneSample($: EngineInterface, cfg: Config): Promise<void> {
       await update($, view, prev => (prev === null ? null : { ...prev, note: 'The snapshot script failed. See the debug log.' }))
       return
     }
-    await update($, view, prev => ({ ...v, note: prev?.note ?? null }))
     const [file, me] = await Promise.all([readShared($), $.session.id()])
+    // The tick sends the warning notices. The pane only draws the warnings.
+    const health = await healthStep(checkupHostOf($), file?.health ?? null, v.at, cfg.limits, v.bound)
+    await update($, view, prev => ({ ...v, warnings: health?.warnings ?? [], note: prev?.note ?? null }))
     await writeShared($, {
       v: 1, at: v.at, level: v.level, bound: v.bound, pressure: v.pressure, swap: v.swap,
       top: topOf(v.causes), topAt: v.at, notifiedAt: file?.notifiedAt ?? 0, writer: me,
+      ...(health === null ? {} : { health }),
     })
   } finally {
     isSampling = false
@@ -210,24 +256,42 @@ async function press($: EngineInterface, c: Cause): Promise<void> {
   await paneSample($, lastConfig)
 }
 
+// A press hides a warning, or shows it again. The state file changes at once,
+// so the badge follows without a wait for the next check.
+async function toggleWarning($: EngineInterface, w: Warning): Promise<void> {
+  const live = (await read($, view))?.warnings ?? []
+  const marks = toggleHidden(parseHidden((await readHiddenText($)) ?? ''), w.mark, live)
+  await $.fs.write(await hiddenFile($), JSON.stringify({ marks })).catch(error => log($, `hidden write failed: ${message(error)}`))
+  const mark = (list: readonly Warning[]) => list.map(x => ({ ...x, isHidden: marks.includes(x.mark) }))
+  await update($, view, v => (v === null ? null : { ...v, warnings: mark(v.warnings) }))
+  const file = await readShared($)
+  if (file?.health !== undefined) await writeShared($, { ...file, health: { ...file.health, warnings: mark(file.health.warnings) } })
+}
+
 function actOf($: EngineInterface, cfg: Config): Act {
   return {
     press: c => { void press($, c) },
+    toggle: w => { void toggleWarning($, w) },
     refresh: () => { void paneSample($, cfg) },
     close: () => { void closePane($) },
   }
 }
 
 // The options of the last register run. openPane from a notice uses them.
-let lastConfig: Config = { thresholds: thresholdsFrom({}), isNotify: true }
+let lastConfig: Config = { thresholds: thresholdsFrom({}), limits: limitsFrom({}), isNotify: true, isWarnNotify: true }
 
 export const register: Register = (on, options) => {
-  const cfg: Config = { thresholds: thresholdsFrom(options), isNotify: String(options.desktopNotify ?? 'on') === 'on' }
+  const cfg: Config = {
+    thresholds: thresholdsFrom(options),
+    limits: limitsFrom(options),
+    isNotify: String(options.desktopNotify ?? 'on') === 'on',
+    isWarnNotify: String(options.warnNotify ?? 'on') === 'on',
+  }
   lastConfig = cfg
 
   on('session.start', async ($, e, next) => {
     const done = await next(e)
-    await $.command.register({ name: 'lag', description: 'Show why the machine lags, and stop a cause', immediate: true })
+    await $.command.register({ name: 'lag', description: 'Show why the machine lags and what needs care, and stop a cause', immediate: true })
     tickTimer?.cancel()
     tickTimer = $.clock.every(TICK_MS, () => { void tick($, cfg) })
     $.clock.after(0, () => { void tick($, cfg) })

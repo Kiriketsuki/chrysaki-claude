@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn } from '../types'
 import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
 import type { AlertAction, CacheFileHost } from './cache'
@@ -18,7 +18,7 @@ import type { OAuthLimits } from './oauth'
 import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff } from './handoff'
 import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
-import { LAG_FILE, lagFrom } from './lagfile'
+import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
 
 export { HANDOFF_FILE }
@@ -44,6 +44,7 @@ const sweep = atom({ plugin: 'chrysaki-statusline', key: 'sweep' } as const, 0)
 const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
 const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
 const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
+const warn = atom({ plugin: 'chrysaki-statusline', key: 'warn' } as const, null as StatuslineWarn | null)
 const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
 
 // The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
@@ -484,6 +485,8 @@ async function refreshLag($: EngineInterface): Promise<void> {
   const text = await $.fs.read(`${dir ?? '/tmp'}/${LAG_FILE}`).catch(() => null)
   const next = typeof text === 'string' ? lagFrom(text, now) : null
   if (JSON.stringify(next) !== JSON.stringify(await read($, lag))) await update($, lag, () => next)
+  const nextWarn = typeof text === 'string' ? warnFrom(text, now) : null
+  if (JSON.stringify(nextWarn) !== JSON.stringify(await read($, warn))) await update($, warn, () => nextWarn)
 }
 
 // The badge opens /lag when chrysaki-lag is loaded, else a toast of the causes.
@@ -743,7 +746,7 @@ export const register: Register = (on, options) => {
       reseedAt = now
       clocks = startup($, rt, clocks)
     }
-    const [fetchState, down, offer, lagNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag)])
+    const [fetchState, down, offer, lagNow, warnNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag), read($, warn)])
     const band = drawBand(table, {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       isLimitsBusy: fetchState.isBusy,
@@ -753,6 +756,7 @@ export const register: Register = (on, options) => {
       share: liveOffer(offer, now),
       onShare: () => { void openShare($) },
       lag: lagNow,
+      warn: warnNow,
       onLag: () => { void openLag($, lagNow) },
       columns: e.props.bodyColumns, barStyle, isRuleAnimated, sweep: isRuleAnimated ? await read($, sweep) : 0, usdToSgd,
       onContext: () => { void toastBreakdown($) },

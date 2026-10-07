@@ -1,7 +1,7 @@
 {
   "name": "chrysaki-lag",
   "version": "0.1.0",
-  "description": "Shows why the machine lags, from pressure stall data, and stops a cause on request",
+  "description": "Shows why the machine lags and warns about disk, memory, heat and system faults",
   "author": {
     "name": "Kiriketsuki"
   },
@@ -36,7 +36,44 @@
       "title": "Desktop notice",
       "description": "Send a notice through notify-send when the lag lasts a minute, at most once every 15 minutes",
       "default": "on",
-      "options": ["on", "off"]
+      "options": [
+        "on",
+        "off"
+      ]
+    },
+    "diskWarnAt": {
+      "type": "string",
+      "title": "Disk warn at",
+      "description": "The share of a disk in use, in percent, at which a warning shows",
+      "default": "90"
+    },
+    "diskCritAt": {
+      "type": "string",
+      "title": "Disk critical at",
+      "description": "The share of a disk in use, in percent, at which the warning turns critical",
+      "default": "97"
+    },
+    "cpuTempWarnAt": {
+      "type": "string",
+      "title": "CPU warm at",
+      "description": "The CPU temperature, in degrees Celsius, at which a warning shows after two readings in a row",
+      "default": "95"
+    },
+    "cpuTempCritAt": {
+      "type": "string",
+      "title": "CPU hot at",
+      "description": "The CPU temperature, in degrees Celsius, at which the warning turns critical",
+      "default": "99"
+    },
+    "warnNotify": {
+      "type": "string",
+      "title": "Warning notice",
+      "description": "Send a notice through notify-send for a critical warning, at most once per warning per hour",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
     }
   }
 }

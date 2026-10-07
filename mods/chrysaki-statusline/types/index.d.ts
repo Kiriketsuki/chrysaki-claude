@@ -82,6 +82,15 @@ export type StatuslineLag = {
   top: string[]
 }
 
+// The worst health warning from the chrysaki-lag state file.
+export type StatuslineWarn = {
+  level: 'warn' | 'crit'
+  // The badge text, such as `/home 91%`.
+  short: string
+  // How many other warnings show.
+  more: number
+}
+
 // A new artifact the band offers to open for a share with the partner account.
 export type ShareOffer = {
   url: string
@@ -191,6 +200,7 @@ declare module 'claude-code' {
       shareOffer: ShareOffer | null
       // The lag badge, or null while the machine is calm.
       lag: StatuslineLag | null
+      warn: StatuslineWarn | null
     }
   }
 }
