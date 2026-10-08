@@ -1,0 +1,7 @@
+{
+  "name": "chrysaki-insight",
+  "version": "0.1.0",
+  "description": "A session insight pane in the Chrysaki look: context, per-request token turns, and tool and subagent activity",
+  "author": { "name": "Kiriketsuki" },
+  "types": "./types/index.d.ts"
+}

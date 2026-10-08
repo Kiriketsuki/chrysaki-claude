@@ -5,6 +5,7 @@ Mods are Claude Code plugins made of function hooks. They run inside the session
 | Mod | What it does |
 |:---|:---|
 | [`chrysaki-statusline`](chrysaki-statusline/) | Draws the Chrysaki statusline as a band above the prompt, with a prompt cache warning, handoff and resume keys, and rate limits that hold between sessions |
+| [`chrysaki-insight`](chrysaki-insight/) | Opens `/insight`, a pane with tabs for the context breakdown, the cost of each request, and running tools and subagents |
 | [`chrysaki-lag`](chrysaki-lag/) | Shows why the machine lags, from pressure stall data, and warns about disk, memory, heat and system faults, with header badges, a `/lag` pane of warnings, causes and stop keys, and desktop notices |
 | [`git-pane`](git-pane/) | Opens a lazygit style git pane with `/git` |
 | [`kilint-gate`](kilint-gate/) | Denies a `git commit` when kilint finds an STE error in the message |
