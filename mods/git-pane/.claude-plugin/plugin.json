@@ -1,0 +1,21 @@
+{
+  "name": "git-pane",
+  "version": "0.1.0",
+  "description": "A lazygit-style git pane and status band in the Chrysaki look",
+  "author": { "name": "Kiriketsuki" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "showBand": {
+      "type": "boolean",
+      "title": "Show the git band",
+      "description": "Draw the one-line git band above the prompt",
+      "default": true
+    },
+    "pollSeconds": {
+      "type": "number",
+      "title": "Band refresh",
+      "description": "Seconds between git status refreshes for the band. 0 turns polling off.",
+      "default": 15
+    }
+  }
+}

@@ -1,0 +1,23 @@
+#!/bin/sh
+# The desktop notice for a new artifact. A click on the notice, or on its
+# button, opens the artifact in the Firefox profile of the account that owns
+# it. There the Share menu adds the partner account.
+# Usage: share-notify <profile folder> <artifact url> <partner email>
+profile=$1
+url=$2
+partner=$3
+# The notice waits 30 minutes, as long as the band offer. timeout ends the
+# wait, and the notice then leaves without an action.
+choice=$(timeout 1800 notify-send -a 'Claude Code' -i emblem-shared -t 0 \
+	-A default='Open to share' -A open='Open to share' \
+	"Share the new artifact with $partner" "$url")
+case $choice in
+default | open) ;;
+*) exit 0 ;;
+esac
+if [ -n "$profile" ] && [ -d "$profile" ]; then
+	# The profile path is the remoting key, so a running window of that
+	# profile takes the tab.
+	exec firefox --profile "$profile" -new-tab "$url"
+fi
+exec xdg-open "$url"

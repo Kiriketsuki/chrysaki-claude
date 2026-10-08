@@ -1,0 +1,44 @@
+{
+  "name": "kilint-gate",
+  "version": "0.1.0",
+  "description": "Denies a git commit when kilint finds STE violations in its message",
+  "author": {
+    "name": "Kiriketsuki"
+  },
+  "userConfig": {
+    "kilintPath": {
+      "type": "string",
+      "title": "kilint path",
+      "description": "Absolute path to the kilint entry script",
+      "default": "/home/kiriketsuki/dev/obKidian/000-System/Scripts/kilint/bin/kilint"
+    },
+    "python": {
+      "type": "string",
+      "title": "Python",
+      "description": "The interpreter that runs kilint",
+      "default": "python3"
+    },
+    "profile": {
+      "type": "string",
+      "title": "STE profile",
+      "description": "The kilint profile for commit messages",
+      "default": "flavored",
+      "options": [
+        "flavored",
+        "strict",
+        "prose"
+      ]
+    },
+    "failOn": {
+      "type": "string",
+      "title": "Block on",
+      "description": "The lowest severity that blocks a commit",
+      "default": "error",
+      "options": [
+        "error",
+        "warn",
+        "info"
+      ]
+    }
+  }
+}
