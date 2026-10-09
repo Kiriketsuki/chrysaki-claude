@@ -226,6 +226,8 @@ declare module 'claude-code' {
       login: PendingLogin | null
       // True while the hint drawer under the prompt is open.
       hintOpen: boolean
+      // True while the crest is open beside the header.
+      crestOpen: boolean
       limitsFetch: LimitsFetch
       outage: StatuslineOutage | null
       // The share offer for the newest artifact, until it is pressed or lapses.
