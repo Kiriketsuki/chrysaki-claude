@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
+import { parseHistory } from '../hooks/history'
 import { limitsKey, parseSaved, rollUsage, rollWindow, toSaved, withSaved } from '../hooks/limits'
 
 const RAN = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -86,7 +87,8 @@ test('a rate-limit push saves the reading for the next session', async ($, on) =
     rateLimits: [{ kind: 'five_hour', percentUsed: 12, resetsAt: '2099-01-01T00:00:00Z' }],
     changed: ['rateLimits'],
   } as never)
-  expect(sets.length).toBe(1)
-  expect(sets[0]?.key).toBe('limits:unknown')
+  // The reading, then the history the sparks draw.
+  expect(sets.map(x => x.key)).toEqual(['limits:unknown', 'history:unknown'])
   expect(parseSaved(sets[0]?.value)?.fiveHour?.percent).toBe(12)
+  expect(parseHistory(sets[1]?.value).fiveHour).toEqual([[NOW, 12]])
 })

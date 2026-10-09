@@ -7,6 +7,12 @@ export type StatuslineWindow = {
   resetsAt?: number
 }
 
+// One rate-limit reading: epoch milliseconds, then the percent used.
+export type Sample = readonly [number, number]
+
+// The 5h and 7d readings over time, per account, for the braille sparks.
+export type UsageHistory = { fiveHour: Sample[]; sevenDay: Sample[] }
+
 export type StatuslineUsage = {
   ctxPercent?: number
   ctxTokens?: number
@@ -89,6 +95,16 @@ export type StatuslineWarn = {
   short: string
   // How many other warnings show.
   more: number
+}
+
+// The codeKs badge, from the heartbeat that `codeks inboxd` writes. `up`: the
+// Codex app-server answers. `down`: inboxd runs but the app-server does not.
+// `off`: the codeks mod is loaded, but no fresh heartbeat exists.
+export type StatuslineCodeks = {
+  state: 'up' | 'down' | 'off'
+  live: number
+  active: number
+  exposed: number
 }
 
 // A new artifact the band offers to open for a share with the partner account.
@@ -192,8 +208,6 @@ declare module 'claude-code' {
       login: PendingLogin | null
       // True while the hint drawer under the prompt is open.
       hintOpen: boolean
-      // The frame of the animated rule between ledger rows.
-      sweep: number
       limitsFetch: LimitsFetch
       outage: StatuslineOutage | null
       // The share offer for the newest artifact, until it is pressed or lapses.
@@ -201,6 +215,12 @@ declare module 'claude-code' {
       // The lag badge, or null while the machine is calm.
       lag: StatuslineLag | null
       warn: StatuslineWarn | null
+      // The codeKs badge, or null without codeKs.
+      codeks: StatuslineCodeks | null
+      // The 5h and 7d readings over time, for the sparks.
+      usageHistory: UsageHistory
+      // The last context token counts of this session.
+      ctxHistory: number[]
     }
   }
 }
