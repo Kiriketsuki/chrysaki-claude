@@ -606,7 +606,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
 }
 
 export const register: Register = (on, options) => {
-  const barStyle = String(options.barStyle ?? 'smooth') as BarStyle
+  const barStyle = String(options.barStyle ?? 'line') as BarStyle
   const isAnimated = String(options.animate ?? 'off') === 'on'
   const isRuleAnimated = String(options.ruleAnimation ?? 'on') === 'on'
   const usdToSgd = Number(options.usdToSgd ?? '1.35') || 1.35

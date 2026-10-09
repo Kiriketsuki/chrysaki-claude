@@ -10,11 +10,11 @@
     "barStyle": {
       "type": "string",
       "title": "Bar style",
-      "description": "Progress bar glyphs. smooth fills each cell in eighths on a recessed track. line draws filled and empty rules",
-      "default": "smooth",
+      "description": "Progress bar glyphs. line draws filled and empty rules. smooth fills each cell in eighths on a recessed track",
+      "default": "line",
       "options": [
-        "smooth",
         "line",
+        "smooth",
         "wave",
         "hex",
         "diamond",

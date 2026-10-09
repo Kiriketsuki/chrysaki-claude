@@ -10,7 +10,7 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 - The bars are 16 cells wide, or 12 when the band is tight. Git shares the two rows from 153 columns. Below that, git takes two rows of its own. Under 100 columns the band folds to one line.
 - Each ledger row opens with a filled jewel badge and a powerline edge. The badges are `5h` on Emerald, `7d` on Teal, `ctx` on Royal Blue Lt, `cache` on Amethyst Lt, and `git` and `diff` on Rhodolite. The badges and the bar tracks are the only fills. A dashed rule parts each ledger row from the next. A gradient of Emerald Lt, Teal Lt and Cerulean runs along it. One cycle takes 6 seconds: 40 steps of 150 ms. The `ruleAnimation` option turns the motion off. Inside the cache warning lead the rule turns Blonde.
 - The context colour goes by tokens, not by percent: Teal under 250k, Blonde from 250k, Error from 500k. A 1M window and a 200k window warn at the same size.
-- Bars default to the `smooth` style. Each cell fills in eighths (`▏▎▍▌▋▊▉█`), so a 16-cell bar shows 128 steps. The bar sits on a track in the Border colour, and the empty part of a partial cell shows as track. The usage zones are Emerald Lt to 50%, Teal Lt to 75%, Blonde Lt to 90%, then Error Lt. The context zones sit at 250k and 500k tokens. Across one and a half cells at each zone boundary, the colour mixes in OKLab into the next zone. Each percent takes the colour of the zone it reached.
+- Bars default to the thin `line` style. The `smooth` style is an option. Each smooth cell fills in eighths (`▏▎▍▌▋▊▉█`), so a 16-cell bar shows 128 steps. The bar sits on a track in the Border colour, and the empty part of a partial cell shows as track. The usage zones are Emerald Lt to 50%, Teal Lt to 75%, Blonde Lt to 90%, then Error Lt. The context zones sit at 250k and 500k tokens. Across one and a half cells at each zone boundary, the colour mixes in OKLab into the next zone. Each percent takes the colour of the zone it reached.
 - The other bar styles draw one glyph a cell. Each cell takes the colour of its zone, and empty cells are dim sockets in the Border colour.
 - Each segment shows a card with details on hover. The `ctx` control opens the context tab of `/insight` when Claude Code loads the `chrysaki-insight` mod. Without it, the control shows the context breakdown as a toast.
 - The band yields to surveys and stacks with the band of any other mod.
@@ -116,7 +116,7 @@ The mod also does not draw OSC 8 links.
 
 | Option | Default | Meaning |
 |:---|:---|:---|
-| `barStyle` | `smooth` | Bar glyphs: `smooth`, `line`, `wave`, `hex`, `diamond`, `circle` or `block` |
+| `barStyle` | `line` | Bar glyphs: `line`, `smooth`, `wave`, `hex`, `diamond`, `circle` or `block` |
 | `animate` | `off` | Scroll the wave bars and pulse the badge every 2 seconds |
 | `usdToSgd` | `1.35` | Multiplier for the cost segment |
 | `cacheWarnLead` | `auto` | Seconds before expiry to warn: `auto` (60 for 5m, 300 for 1h), `60`, `120`, `300` or `600` |

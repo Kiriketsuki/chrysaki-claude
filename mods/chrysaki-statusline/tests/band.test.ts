@@ -125,7 +125,7 @@ test('draws no git key without the git-pane mod', async ($, on) => {
   expect(r.found).toBe(false)
 })
 
-test('every bar in the band has one length, wide and medium', async ($, on) => {
+test('every smooth bar in the band has one length, wide and medium', { options: { barStyle: 'smooth' } }, async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
   for (const columns of [200, 120]) {
@@ -139,7 +139,7 @@ test('every bar in the band has one length, wide and medium', async ($, on) => {
   }
 })
 
-test('the line style still draws its bars as rule glyphs', { options: { barStyle: 'line' } }, async ($, on) => {
+test('the default line style draws its bars as rule glyphs', async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
@@ -152,7 +152,7 @@ test('the line style still draws its bars as rule glyphs', { options: { barStyle
   await ui.unmount()
 })
 
-test('off the terminal a smooth bar draws as Text on the track', async ($, on) => {
+test('off the terminal a smooth bar draws as Text on the track', { options: { barStyle: 'smooth' } }, async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(200) })
