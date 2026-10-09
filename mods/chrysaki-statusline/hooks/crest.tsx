@@ -19,9 +19,18 @@ const CAPTION_INK = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean] as const
 // The mark's cells for this band, or null when the band draws no crest. The
 // desktop and the editor have no Nerd Font, so the mark draws on the
 // terminal alone.
+function hasRoom(d: BandData): boolean {
+  return d.surface === 'terminal' && d.columns >= CREST_COLUMNS && d.emblem !== 'none'
+}
+
 export function bandEmblem(d: BandData): readonly (readonly EmblemCell[])[] | null {
-  if (d.surface !== 'terminal' || d.columns < CREST_COLUMNS || d.emblem === 'none') return null
+  if (!hasRoom(d) || !d.isCrestOpen) return null
   return EMBLEMS[d.emblem] ?? EMBLEMS[DEFAULT_EMBLEM] ?? null
+}
+
+// True when the band has room for the crest but the person folded it.
+export function crestFolded(d: BandData): boolean {
+  return hasRoom(d) && !d.isCrestOpen
 }
 
 // The cells the crest takes from the header: the mark and one space.
@@ -50,7 +59,7 @@ export function repoName(d: BandData): string {
 // The caption beside the mark's lower half: the name from the `caption`
 // option in gem type, then the repository.
 export function captionRow(T: Table, d: BandData): RenderElement {
-  const { Box, Text } = T
+  const { Box, Text, Button } = T
   const name = d.caption.trim()
   const repo = repoName(d)
   const n = Math.max(1, name.length - 1)
@@ -60,6 +69,8 @@ export function captionRow(T: Table, d: BandData): RenderElement {
       {name === '' ? <Text /> : <Text>{letters}</Text>}
       {name !== '' && repo !== '' ? <Text color={CORE.border}>{'  ◆  '}</Text> : <Text />}
       {repo === '' ? <Text /> : <Text color={ROLE.sec}>{repo}</Text>}
+      <Text>{'   '}</Text>
+      <Button key="crest-fold" label="◂ fold" hotkey="e" plain dimColor onPress={d.onToggleCrest} />
     </Box>
   )
 }
