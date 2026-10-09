@@ -12,7 +12,7 @@ import type { StatuslineWindow } from '../types'
 import { cacheCard, toneColor } from './cache'
 import type { BandData } from './draw'
 import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, smoothCells, untilReset, usageColor } from './format'
-import { loopSampler, mixHex } from './gradient'
+import { loopSampler, mixHex, readableGround } from './gradient'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces, truncate } from './prims'
 import type { Table } from './prims'
@@ -81,7 +81,7 @@ function center(text: string, width: number): string {
 function badge(T: Table, b: Badge): RenderElement[] {
   const { Box, Text, Button } = T
   const inner = b.width - 1
-  const at = (i: number) => facet(b.gem, i / Math.max(1, inner - 1))
+  const at = (i: number) => readableGround(facet(b.gem, i / Math.max(1, inner - 1)), ROLE.text)
   const cells = (text: string, offset: number) => [...text].map((ch, i) => <Text backgroundColor={at(i + offset)} color={ROLE.text} bold>{ch}</Text>)
   const mark = b.press?.hotkey === undefined ? 0 : 3
   const body = b.press === undefined

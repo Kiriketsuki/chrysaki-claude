@@ -14,7 +14,7 @@ import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessi
 import type { BarStyle } from './format'
 import type { UsageHistory } from './history'
 import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
-import { loopSampler, mixHex, sampleRamp } from './gradient'
+import { loopSampler, mixHex, readableGround, readableInk, sampleRamp } from './gradient'
 import { packCells, paintCells } from './raster'
 import type { Paint } from './raster'
 import { CORE, ROLE } from './palette'
@@ -121,7 +121,7 @@ function inked(T: Table, text: string, ink: readonly string[], bg: string, bold?
   let k = 0
   return [...text].map(ch => {
     if (ch === ' ') return <Text backgroundColor={bg}> </Text>
-    const color = sampleRamp(ink, k++ / n)
+    const color = readableInk(sampleRamp(ink, k++ / n), bg)
     return <Text backgroundColor={bg} color={color} bold={bold}>{ch}</Text>
   })
 }
@@ -133,7 +133,7 @@ function segBody(T: Table, s: Seg): RenderElement {
       <Box key={`seg-${s.press.key}`} backgroundColor={s.bg}>
         <Text backgroundColor={s.bg}> </Text>
         {s.ink === undefined
-          ? <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
+          ? <Button key={s.press.key} hotkey={s.press.hotkey} plain onPress={s.press.onPress}><Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{s.press.label}</Text></Button>
           : <Button key={s.press.key} hotkey={s.press.hotkey} plain onPress={s.press.onPress}>{inked(T, s.press.label, s.ink, s.bg, s.bold)}</Button>}
         <Text backgroundColor={s.bg}> </Text>
       </Box>
@@ -141,7 +141,7 @@ function segBody(T: Table, s: Seg): RenderElement {
   }
   const at = s.text.indexOf(' ')
   if (s.iconFg === undefined || at < 0) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
-  const icon = <Text backgroundColor={s.bg} color={s.iconFg} bold>{` ${s.text.slice(0, at)}`}</Text>
+  const icon = <Text backgroundColor={s.bg} color={readableInk(s.iconFg, s.bg)} bold>{` ${s.text.slice(0, at)}`}</Text>
   if (s.ink !== undefined) {
     return <Text backgroundColor={s.bg}>{[icon, <Text backgroundColor={s.bg}> </Text>, ...inked(T, s.text.slice(at + 1), s.ink, s.bg, s.bold), <Text backgroundColor={s.bg}> </Text>]}</Text>
   }
@@ -211,6 +211,9 @@ function mirrored(T: Table, segs: readonly Seg[]): RenderElement[] {
 // the account run a gradient letter by letter. Alerts keep their fills.
 // Each zigzag edge cuts one ground into the next.
 const BRAND_INK = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean] as const
+// The ground of a minor alert: a dark amber, so Blonde lettering reads on it
+// and no text ever sits on a Blonde fill.
+export const AMBER_GROUND = mixHex(CORE.blonde, CORE.abyss, 0.8)
 // The brand run as a loop, for the drifting header rule.
 const brandAt = loopSampler(BRAND_INK)
 
@@ -243,8 +246,8 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean): HeaderPlan 
   const outageLabel = o === null ? '' : `⚠ ${o.impact}${o.count > 1 ? ` +${o.count - 1}` : ''}`
   const outageSeg: Seg[] = o === null ? [] : [{
     text: `o: ${outageLabel}`,
-    bg: o.impact === 'minor' ? CORE.blonde : CORE.error,
-    fg: o.impact === 'minor' ? CORE.abyss : ROLE.text,
+    bg: o.impact === 'minor' ? AMBER_GROUND : CORE.error,
+    fg: o.impact === 'minor' ? ROLE.blondeLt : ROLE.text,
     bold: true,
     press: { key: 'outage', label: outageLabel, hotkey: 'o', onPress: d.onOutage },
   }]
@@ -260,8 +263,8 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean): HeaderPlan 
   const lag = d.lag
   const lagSeg: Seg[] = lag === null ? [] : [{
     text: `l: ▲ ${lag.bound} ${lag.pct}%`,
-    bg: lag.level === 'laggy' ? CORE.error : CORE.blonde,
-    fg: lag.level === 'laggy' ? ROLE.text : CORE.abyss,
+    bg: lag.level === 'laggy' ? CORE.error : AMBER_GROUND,
+    fg: lag.level === 'laggy' ? ROLE.text : ROLE.blondeLt,
     bold: true,
     press: { key: 'lag', label: `▲ ${lag.bound} ${lag.pct}%`, hotkey: 'l', onPress: d.onLag },
   }]
@@ -270,8 +273,8 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean): HeaderPlan 
   const warnText = warn === null ? '' : `⚠ ${warn.short}${warn.more > 0 ? ` +${warn.more}` : ''}`
   const warnSeg: Seg[] = warn === null ? [] : [{
     text: `w: ${warnText}`,
-    bg: warn.level === 'crit' ? CORE.error : CORE.blonde,
-    fg: warn.level === 'crit' ? ROLE.text : CORE.abyss,
+    bg: warn.level === 'crit' ? CORE.error : AMBER_GROUND,
+    fg: warn.level === 'crit' ? ROLE.text : ROLE.blondeLt,
     bold: true,
     press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
   }]
@@ -282,13 +285,16 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean): HeaderPlan 
     ...shareSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.elevated, fg: ROLE.blondeLt, bold: true }]),
     ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.raised, fg: ROLE.sec, drop: 2 }]),
-    ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
+    ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: AMBER_GROUND, fg: ROLE.blondeLt, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
   // The chevron opens the hint drawer under the prompt. It takes one cell, and
   // the brand segment brings its own leading space.
   const chevron = 1
-  const [fitLeft, fitRight] = fitSegs(left, right, inner - chevron - 2 - MIN_RULE)
+  // Every ground gives its lettering at least 4.5:1, so the edges, which read
+  // the same ground, stay matched.
+  const guard = (s: Seg): Seg => ({ ...s, bg: readableGround(s.bg, s.fg) })
+  const [fitLeft, fitRight] = fitSegs(left.map(guard), right.map(guard), inner - chevron - 2 - MIN_RULE)
   const room = Math.max(0, inner - chevron - segWidth(fitLeft) - segWidth(fitRight) - 2)
   return { left: fitLeft, right: fitRight, room }
 }

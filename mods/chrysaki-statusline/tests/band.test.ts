@@ -4,6 +4,8 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import { GEMS, facet, ledgerRules, planLedger, ruleText } from '../hooks/ledger'
 import { unpackCells } from '../hooks/raster'
+import { contrast, readableGround } from '../hooks/gradient'
+import { AMBER_GROUND } from '../hooks/draw'
 import { usageColor } from '../hooks/format'
 
 import { handoffPathFrom } from '../hooks/resume'
@@ -310,9 +312,9 @@ test('the ledger opens each row with a jewel badge and parts its columns', async
     expect(await ui.find({ type: 'Text', text: /^ +5h +$/ })).toBeDefined()
     // ' 5h  ' puts the 5 at cell 1 of 5.
     const grounds = async (text: string) => (await ui.findAll({ type: 'Text', text })).map(t => t.props.backgroundColor)
-    expect(await grounds('5')).toContain(facet(GEMS.emerald, 1 / 4))
-    expect(await grounds('⧗')).toContain(facet(GEMS.amethyst, 0))
-    expect(await grounds('±')).toContain(facet(GEMS.rhodolite, 0))
+    expect(await grounds('5')).toContain(readableGround(facet(GEMS.emerald, 1 / 4), '#e0e2ea'))
+    expect(await grounds('⧗')).toContain(readableGround(facet(GEMS.amethyst, 0), '#e0e2ea'))
+    expect(await grounds('±')).toContain(readableGround(facet(GEMS.rhodolite, 0), '#e0e2ea'))
     expect((await ui.findAll({ type: 'Text', text: '\ue0b2' })).length).toBeGreaterThanOrEqual(6)
     // A padded bar parts the columns. No dotted or box corner rule shows.
     expect(await ui.find({ type: 'Text', text: '  │  ' })).toBeDefined()
@@ -392,6 +394,24 @@ test('a braille spark follows each usage bar and the context bar', async ($, on)
     }
     await ui.unmount()
   }
+})
+
+test('no lettering in the band sits on a ground below 4.5:1', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(238) })
+    const filled = (await ui.findAll({ type: 'Text' })).filter(t => /[^\s\ue0b0-\ue0bf]/.test(t.text) && typeof t.props.backgroundColor === 'string' && typeof t.props.color === 'string' && String(t.props.color).startsWith('#'))
+    expect(filled.length).toBeGreaterThan(10)
+    const low = filled.filter(t => contrast(String(t.props.color), String(t.props.backgroundColor)) < 4.5).map(t => `${t.text} ${String(t.props.color)} on ${String(t.props.backgroundColor)}`)
+    expect(low).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('a minor alert letters Blonde on a dark amber ground', async () => {
+  expect(contrast('#fcc96a', AMBER_GROUND)).toBeGreaterThanOrEqual(4.5)
+  expect(readableGround('#fbb13c', '#e0e2ea')).not.toBe('#fbb13c')
 })
 
 test('the plan gives git the rest of a wide band and stacks it on a narrow one', async () => {

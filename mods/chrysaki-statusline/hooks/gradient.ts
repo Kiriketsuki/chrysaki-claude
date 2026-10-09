@@ -42,6 +42,41 @@ function mixLab(from: Lab, to: Lab, f: number): Lab {
   return [0, 1, 2].map(k => (from[k] as number) + ((to[k] as number) - (from[k] as number)) * f) as Lab
 }
 
+// WCAG relative luminance of a hex colour.
+export function luminance(hex: string): number {
+  const n = Number.parseInt(hex.slice(1), 16)
+  const [r, g, b] = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff].map(toLinear) as [number, number, number]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+// The WCAG contrast ratio of two hex colours, 1 to 21.
+export function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+// `bg`, darkened toward the Abyss until `fg` on it reaches `min` contrast.
+// Text never sits on a ground too light to read, such as white on Blonde.
+export function readableGround(bg: string, fg: string, min = 4.5): string {
+  if (!bg.startsWith('#') || !fg.startsWith('#')) return bg
+  for (let k = 0; k <= 10; k++) {
+    const ground = k === 0 ? bg : mixHex(bg, '#0f1117', k / 10)
+    if (contrast(ground, fg) >= min) return ground
+  }
+  return '#0f1117'
+}
+
+// `fg`, lightened toward the primary text colour until it reaches `min`
+// contrast on `bg`. An accent keeps its hue as far as it can.
+export function readableInk(fg: string, bg: string, min = 4.5): string {
+  if (!bg.startsWith('#') || !fg.startsWith('#')) return fg
+  for (let k = 0; k <= 10; k++) {
+    const ink = k === 0 ? fg : mixHex(fg, '#e0e2ea', k / 10)
+    if (contrast(ink, bg) >= min) return ink
+  }
+  return '#e0e2ea'
+}
+
 // The colour `f` of the way from `a` to `b`, mixed in OKLab.
 export function mixHex(a: string, b: string, f: number): string {
   return oklabToHex(mixLab(hexToOklab(a), hexToOklab(b), Math.max(0, Math.min(1, f))))
