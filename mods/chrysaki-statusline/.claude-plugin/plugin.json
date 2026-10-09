@@ -10,16 +10,38 @@
     "barStyle": {
       "type": "string",
       "title": "Bar style",
-      "description": "Progress bar glyphs. line draws filled and empty rules in the prompt colour",
+      "description": "Progress bar glyphs. line draws filled and empty rules. smooth fills each cell in eighths on a recessed track",
       "default": "line",
       "options": [
         "line",
+        "smooth",
         "wave",
         "hex",
         "diamond",
         "circle",
         "block"
       ]
+    },
+    "emblem": {
+      "type": "string",
+      "title": "Crest mark",
+      "description": "The Chrysaki mark beside the header on a wide terminal band. none keeps the ⬢ glyph",
+      "default": "cube-emerald-plain",
+      "options": [
+        "cube-emerald-plain",
+        "cube-tri-plain",
+        "cube-mono-plain",
+        "cube-emerald",
+        "cube-tri",
+        "cube-mono",
+        "none"
+      ]
+    },
+    "caption": {
+      "type": "string",
+      "title": "Crest caption",
+      "description": "The name on the row beside the crest, before the repository. Empty shows the repository alone",
+      "default": ""
     },
     "animate": {
       "type": "string",
@@ -34,7 +56,7 @@
     "ruleAnimation": {
       "type": "string",
       "title": "Animated row rule",
-      "description": "Run a gradient along the dashed rule between ledger rows. It redraws the band every 150 ms",
+      "description": "Run a gradient along the dashed rule between ledger rows. The terminal repaints the rule cells every 150 ms without a redraw of the band",
       "default": "on",
       "options": [
         "on",

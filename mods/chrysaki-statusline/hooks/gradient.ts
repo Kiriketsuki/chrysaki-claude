@@ -38,14 +38,73 @@ export function oklabToHex([L, a, b]: Lab): string {
   return '#' + rgb.map(v => fromLinear(v).toString(16).padStart(2, '0')).join('')
 }
 
+function mixLab(from: Lab, to: Lab, f: number): Lab {
+  return [0, 1, 2].map(k => (from[k] as number) + ((to[k] as number) - (from[k] as number)) * f) as Lab
+}
+
+// WCAG relative luminance of a hex colour.
+export function luminance(hex: string): number {
+  const n = Number.parseInt(hex.slice(1), 16)
+  const [r, g, b] = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff].map(toLinear) as [number, number, number]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+// The WCAG contrast ratio of two hex colours, 1 to 21.
+export function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+// `bg`, darkened toward the Abyss until `fg` on it reaches `min` contrast.
+// Text never sits on a ground too light to read, such as white on Blonde.
+export function readableGround(bg: string, fg: string, min = 4.5): string {
+  if (!bg.startsWith('#') || !fg.startsWith('#')) return bg
+  for (let k = 0; k <= 10; k++) {
+    const ground = k === 0 ? bg : mixHex(bg, '#0f1117', k / 10)
+    if (contrast(ground, fg) >= min) return ground
+  }
+  return '#0f1117'
+}
+
+// `fg`, lightened toward the primary text colour until it reaches `min`
+// contrast on `bg`. An accent keeps its hue as far as it can.
+export function readableInk(fg: string, bg: string, min = 4.5): string {
+  if (!bg.startsWith('#') || !fg.startsWith('#')) return fg
+  for (let k = 0; k <= 10; k++) {
+    const ink = k === 0 ? fg : mixHex(fg, '#e0e2ea', k / 10)
+    if (contrast(ink, bg) >= min) return ink
+  }
+  return '#e0e2ea'
+}
+
+// The colour `f` of the way from `a` to `b`, mixed in OKLab.
+export function mixHex(a: string, b: string, f: number): string {
+  return oklabToHex(mixLab(hexToOklab(a), hexToOklab(b), Math.max(0, Math.min(1, f))))
+}
+
+// A sampler for a loop through `stops`. It converts the stops once, so a
+// raster frame of hundreds of cells costs one conversion per cell.
+export function loopSampler(stops: readonly string[]): (t: number) => string {
+  if (stops.length === 0) return () => '#000000'
+  const labs = stops.map(hexToOklab)
+  return t => {
+    const x = (((t % 1) + 1) % 1) * labs.length
+    const i = Math.floor(x)
+    return oklabToHex(mixLab(labs[i % labs.length] as Lab, labs[(i + 1) % labs.length] as Lab, x - i))
+  }
+}
+
+// The colour at `t` (0 to 1) along an open run of `stops`: 0 is the first
+// stop and 1 the last.
+export function sampleRamp(stops: readonly string[], t: number): string {
+  if (stops.length === 0) return '#000000'
+  if (stops.length === 1) return stops[0] as string
+  const x = Math.max(0, Math.min(1, t)) * (stops.length - 1)
+  const i = Math.min(Math.floor(x), stops.length - 2)
+  return mixHex(stops[i] as string, stops[i + 1] as string, x - i)
+}
+
 // The colour at `t` along a loop through `stops`: 0 and 1 are the first stop.
 export function sampleLoop(stops: readonly string[], t: number): string {
-  if (stops.length === 0) return '#000000'
-  const labs = stops.map(hexToOklab)
-  const x = (((t % 1) + 1) % 1) * labs.length
-  const i = Math.floor(x)
-  const from = labs[i % labs.length] as Lab
-  const to = labs[(i + 1) % labs.length] as Lab
-  const f = x - i
-  return oklabToHex([0, 1, 2].map(k => (from[k] as number) + ((to[k] as number) - (from[k] as number)) * f) as Lab)
+  return loopSampler(stops)(t)
 }

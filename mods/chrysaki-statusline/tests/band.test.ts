@@ -2,7 +2,11 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
-import { planLedger, ruleText } from '../hooks/ledger'
+import { GEMS, facet, ledgerRules, planLedger, ruleText } from '../hooks/ledger'
+import { unpackCells } from '../hooks/raster'
+import { contrast, readableGround } from '../hooks/gradient'
+import { AMBER_GROUND } from '../hooks/draw'
+import { usageColor } from '../hooks/format'
 
 import { handoffPathFrom } from '../hooks/resume'
 
@@ -54,10 +58,10 @@ test('draws the four lines with the bash thresholds on every surface', async ($,
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(160) })
-    // A percent takes the colour of the bar zone it reached: 80% sits in the
-    // Blonde Lt zone, 20% stays in the first zone and keeps the text colour.
+    // A percent takes the ramp colour it reached: 80% sits between amber and
+    // red. 20% stays in the green zone and keeps the text colour.
     const five = await ui.find({ type: 'Text', text: /^ ?80%$/ })
-    expect(five?.props.color).toBe('#fcc96a')
+    expect(five?.props.color).toBe(usageColor(80))
     const seven = await ui.find({ type: 'Text', text: /^ ?20%$/ })
     expect(seven?.props.color).toBe('#e0e2ea')
     expect(await ui.find({ type: 'Text', text: /handoff/ })).toBeDefined()
@@ -123,18 +127,41 @@ test('draws no git key without the git-pane mod', async ($, on) => {
   expect(r.found).toBe(false)
 })
 
-test('every bar in the band has one length, wide and medium', async ($, on) => {
+test('every smooth bar in the band has one length, wide and medium', { options: { barStyle: 'smooth' } }, async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
   for (const columns of [200, 120]) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
-    // A line-style bar is one uncoloured Text of rule glyphs. Its filled and
-    // empty runs are coloured Texts nested in it.
-    const bars = (await ui.findAll({ type: 'Text', text: /^[━─]{3,}$/ })).filter(b => b.props.color === undefined)
+    // On the terminal each smooth bar is one Raster row.
+    const bars = (await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('bar-'))
     expect(bars.length).toBeGreaterThanOrEqual(3)
-    expect(new Set(bars.map(b => b.text.length)).size).toBe(1)
+    expect(new Set(bars.map(b => b.props.columns)).size).toBe(1)
+    expect(bars.every(b => b.props.rows === 1)).toBe(true)
     await ui.unmount()
   }
+})
+
+test('the default line style draws its bars as rule glyphs', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
+  // A line-style bar is one uncoloured Text of rule glyphs. Coloured Texts
+  // nested in it hold its filled and empty runs.
+  const bars = (await ui.findAll({ type: 'Text', text: /^[━╸─]{3,}$/ })).filter(b => b.props.color === undefined)
+  expect(bars.length).toBeGreaterThanOrEqual(3)
+  expect(new Set(bars.map(b => b.text.length)).size).toBe(1)
+  expect((await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('bar-')).length).toBe(0)
+  await ui.unmount()
+})
+
+test('off the terminal a smooth bar draws as Text on the track', { options: { barStyle: 'smooth' } }, async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(200) })
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  // 80% of 16 cells is 12 full cells and 6 eighths.
+  expect(await ui.find({ type: 'Text', text: /^█{12}▊ {3}$/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('the header mirrors the brand run on the right', async ($, on) => {
@@ -146,6 +173,20 @@ test('the header mirrors the brand run on the right', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: '' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: / \$2\.70 / })).toBeDefined()
   await ui.unmount()
+})
+
+test('the header sets the model name in gem type on the Abyss', async ($, on) => {
+  answerMeasure(on)
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  await $.session.measure(MEASURE)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(200) })
+    // Each letter is its own Text on the Abyss, coloured along the brand run.
+    const letters = (await ui.findAll({ type: 'Text', text: /^[A-Za-z0-9.]$/ })).filter(t => t.props.backgroundColor === '#0f1117')
+    expect(letters.length).toBeGreaterThan(5)
+    expect(new Set(letters.map(t => t.props.color)).size).toBeGreaterThan(4)
+    await ui.unmount()
+  }
 })
 
 test('the handoff key runs /context-handoff and copies the written path', async ($, on) => {
@@ -265,10 +306,16 @@ test('the ledger opens each row with a jewel badge and parts its columns', async
   await $.tool.call({ tool: 'Bash', command: 'git status' })
   for (const columns of [238, 160]) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
-    // Emerald for 5h, Amethyst Lt for the cache, Rhodolite for the diff.
-    expect((await ui.find({ type: 'Text', text: /▰ 5h|▱ 5h|◆ 5h/ }))?.props.backgroundColor).toBe('#14664e')
-    expect((await ui.find({ type: 'Text', text: /⧗ cache/ }))?.props.backgroundColor).toBe('#583090')
-    expect((await ui.find({ type: 'Text', text: /± diff/ }))?.props.backgroundColor).toBe('#9e2d6e')
+    // Each badge is a hexagon gem: Emerald for 5h, Amethyst for the cache,
+    // Rhodolite for the diff. Its cells run across the facet, so the light
+    // catch sits inside the badge and the caps take the dim edge.
+    expect(await ui.find({ type: 'Text', text: /^ +5h +$/ })).toBeDefined()
+    // ' 5h  ' puts the 5 at cell 1 of 5.
+    const grounds = async (text: string) => (await ui.findAll({ type: 'Text', text })).map(t => t.props.backgroundColor)
+    expect(await grounds('5')).toContain(readableGround(facet(GEMS.emerald, 1 / 4), '#e0e2ea'))
+    expect(await grounds('⧗')).toContain(readableGround(facet(GEMS.amethyst, 0), '#e0e2ea'))
+    expect(await grounds('±')).toContain(readableGround(facet(GEMS.rhodolite, 0), '#e0e2ea'))
+    expect((await ui.findAll({ type: 'Text', text: '\ue0b2' })).length).toBeGreaterThanOrEqual(6)
     // A padded bar parts the columns. No dotted or box corner rule shows.
     expect(await ui.find({ type: 'Text', text: '  │  ' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /[┊┐└┘]/ })).toBeUndefined()
@@ -293,7 +340,7 @@ test('a dashed rule parts the 5h row from the 7d row', { options: { ruleAnimatio
   }
 })
 
-test('the animated rule runs a gradient that moves with the sweep', async ($, on) => {
+test('the clock repaints the rule Raster without a redraw of the band', async ($, on) => {
   const clock = answerMeasure(on)
   on('env.set', async () => ({ value: undefined }))
   on('fs.exists', async () => ({ value: false }))
@@ -302,17 +349,69 @@ test('the animated rule runs a gradient that moves with the sweep', async ($, on
   on('store.get', async () => ({ value: undefined }))
   on('process.run', async () => ({ value: { ...RAN, exitCode: 1, stdout: '' } }))
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  const blits: { key: string; cells: string }[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) blits.push({ key: e.key, cells: e.cells })
+    return { value: {} }
+  })
   await $.session.start({ cwd: '/home/k/repo', surface: 'terminal', isInteractive: true })
   await $.session.measure(MEASURE)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(238) })
-  const colours = async () => (await ui.findAll({ type: 'Text', text: /^──\s?$/ })).map(t => String(t.props.color))
-  const before = await colours()
-  expect(before.length).toBeGreaterThan(10)
-  expect(new Set(before).size).toBeGreaterThan(3)
+  const rule = await ui.find({ type: 'Raster', key: 'rule-1' })
+  expect(rule?.props.columns).toBe(ledgerRules(238)[0]?.width)
+  const drawn = String(rule?.props.cells)
+  const inks = unpackCells(drawn).filter(c => c.codePoint !== 0x20).map(c => c.fg)
+  expect(new Set(inks).size).toBeGreaterThan(10)
   await clock.advance(150 * 5)
-  const after = await colours()
-  expect(after[0]).not.toBe(before[0])
+  const sent = blits.filter(b => b.key === 'rule-1')
+  expect(sent.length).toBe(5)
+  expect(new Set(sent.map(b => b.cells)).size).toBe(5)
+  expect(sent[0]?.cells).not.toBe(drawn)
+  // The header rule drifts on the same clock.
+  expect(blits.filter(b => b.key === 'header-rule').length).toBe(5)
+  // The band did not draw again: the mounted Raster keeps the cells it drew.
+  expect(String((await ui.find({ type: 'Raster', key: 'rule-1' }))?.props.cells)).toBe(drawn)
   await ui.unmount()
+})
+
+test('off the terminal the animated rule draws a still gradient of Text', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(238) })
+  const colours = (await ui.findAll({ type: 'Text', text: /^──\s?$/ })).map(t => String(t.props.color))
+  expect(colours.length).toBeGreaterThan(10)
+  expect(new Set(colours).size).toBeGreaterThan(3)
+  await ui.unmount()
+})
+
+test('a braille spark follows each usage bar and the context bar', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  for (const columns of [238, 130]) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
+    for (const key of ['spark-5h', 'spark-7d', 'spark-ctx']) {
+      expect((await ui.find({ type: 'Raster', key }))?.props.columns).toBe(8)
+    }
+    await ui.unmount()
+  }
+})
+
+test('no lettering in the band sits on a ground below 4.5:1', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(238) })
+    const filled = (await ui.findAll({ type: 'Text' })).filter(t => /[^\s\ue0b0-\ue0bf]/.test(t.text) && typeof t.props.backgroundColor === 'string' && typeof t.props.color === 'string' && String(t.props.color).startsWith('#'))
+    expect(filled.length).toBeGreaterThan(10)
+    const low = filled.filter(t => contrast(String(t.props.color), String(t.props.backgroundColor)) < 4.5).map(t => `${t.text} ${String(t.props.color)} on ${String(t.props.backgroundColor)}`)
+    expect(low).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('a minor alert letters Blonde on a dark amber ground', async () => {
+  expect(contrast('#fcc96a', AMBER_GROUND)).toBeGreaterThanOrEqual(4.5)
+  expect(readableGround('#fbb13c', '#e0e2ea')).not.toBe('#fbb13c')
 })
 
 test('the plan gives git the rest of a wide band and stacks it on a narrow one', async () => {

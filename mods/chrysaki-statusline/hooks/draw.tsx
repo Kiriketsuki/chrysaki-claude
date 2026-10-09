@@ -8,11 +8,16 @@
 import type { RenderElement } from 'claude-code'
 
 import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
-import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
-import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
+import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
 import type { BarStyle } from './format'
-import { ledgerRows } from './ledger'
+import type { UsageHistory } from './history'
+import { accountRows } from './dropdown'
+import { CREST_COLUMNS, bandEmblem, captionRow, crestFolded, crestWidth, emblemColumn } from './crest'
+import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
+import { loopSampler, mixHex, readableGround, readableInk, sampleRamp } from './gradient'
+import { packCells, paintCells } from './raster'
+import type { Paint } from './raster'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces } from './prims'
 import type { Table } from './prims'
@@ -29,8 +34,20 @@ export type BandData = {
   now: number
   home: string
   columns: number
+  // The mark the crest draws (an EMBLEMS name, or none) and the caption name.
+  emblem: string
+  caption: string
+  // The crest folds to the hexagon glyph. A press on the glyph opens it.
+  isCrestOpen: boolean
+  onToggleCrest: () => void
+  // The surface the band draws on. Only the terminal paints a Raster.
+  surface: string
   barStyle: BarStyle
-  // The rule between ledger rows: animated, and its current frame.
+  // The 5h and 7d readings over time, and the last context token counts.
+  history: UsageHistory
+  ctxHistory: number[]
+  // The rule between ledger rows: animated, and the sweep frame it draws with.
+  // On the terminal the sweep clock repaints the rule after that.
   isRuleAnimated: boolean
   sweep: number
   usdToSgd: number
@@ -75,8 +92,9 @@ export type BandData = {
 
 // Below this width the band folds to the header and one line.
 export const NARROW_COLUMNS = 100
-// At this width and up, an empty drawer slot parts the header from the ledger.
-const SPACER_COLUMNS = 150
+// At this width and up, a row parts the header from the ledger. It holds the
+// caption beside the crest, or the account dropdown.
+const SPACER_COLUMNS = CREST_COLUMNS
 // The engine draws its collapse mark `[-]` over the last cells of the band's
 // first row. That row is the blank top margin, so the header runs full width.
 const RESERVE = 0
@@ -98,8 +116,22 @@ type Seg = {
   fg: string
   bold?: boolean
   iconFg?: string
-  press?: { key: string; label: string; hotkey: string; onPress: () => void }
+  // Gradient stops for the words after the icon, drawn letter by letter.
+  ink?: readonly string[]
+  press?: { key: string; label: string; hotkey?: string; onPress: () => void }
   drop?: number
+}
+
+// Letters of `text`, each in its own colour along the `ink` run.
+function inked(T: Table, text: string, ink: readonly string[], bg: string, bold?: boolean): RenderElement[] {
+  const { Text } = T
+  const n = Math.max(1, text.trim().length - 1)
+  let k = 0
+  return [...text].map(ch => {
+    if (ch === ' ') return <Text backgroundColor={bg}> </Text>
+    const color = readableInk(sampleRamp(ink, k++ / n), bg)
+    return <Text backgroundColor={bg} color={color} bold={bold}>{ch}</Text>
+  })
 }
 
 function segBody(T: Table, s: Seg): RenderElement {
@@ -108,16 +140,25 @@ function segBody(T: Table, s: Seg): RenderElement {
     return (
       <Box key={`seg-${s.press.key}`} backgroundColor={s.bg}>
         <Text backgroundColor={s.bg}> </Text>
-        <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
+        {s.ink === undefined
+          ? <Button key={s.press.key} hotkey={s.press.hotkey} plain onPress={s.press.onPress}><Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{s.press.label}</Text></Button>
+          : <Button key={s.press.key} hotkey={s.press.hotkey} plain onPress={s.press.onPress}>{inked(T, s.press.label, s.ink, s.bg, s.bold)}</Button>}
         <Text backgroundColor={s.bg}> </Text>
       </Box>
     )
   }
   const at = s.text.indexOf(' ')
+  if (s.iconFg === undefined && s.ink !== undefined) {
+    return <Text backgroundColor={s.bg}>{[<Text backgroundColor={s.bg}> </Text>, ...inked(T, s.text, s.ink, s.bg, s.bold), <Text backgroundColor={s.bg}> </Text>]}</Text>
+  }
   if (s.iconFg === undefined || at < 0) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
+  const icon = <Text backgroundColor={s.bg} color={readableInk(s.iconFg, s.bg)} bold>{` ${s.text.slice(0, at)}`}</Text>
+  if (s.ink !== undefined) {
+    return <Text backgroundColor={s.bg}>{[icon, <Text backgroundColor={s.bg}> </Text>, ...inked(T, s.text.slice(at + 1), s.ink, s.bg, s.bold), <Text backgroundColor={s.bg}> </Text>]}</Text>
+  }
   return (
     <Text backgroundColor={s.bg}>
-      <Text backgroundColor={s.bg} color={s.iconFg} bold>{` ${s.text.slice(0, at)}`}</Text>
+      {icon}
       <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{`${s.text.slice(at)} `}</Text>
     </Text>
   )
@@ -175,19 +216,35 @@ function mirrored(T: Table, segs: readonly Seg[]): RenderElement[] {
 
 // --- Header --------------------------------------------------------------------
 
-// The header: the drawer chevron, the brand run (model on Emerald, version on
-// Royal Blue Lt, folder on Amethyst Lt), a rule in the prompt's colour, then
-// the mirror run with cost on Amethyst Lt, the session clock on Royal Blue Lt,
-// the inbox on Blonde and the account on Emerald, or Topaz for a work account.
-// Neighbours take hues far apart, so each powerline edge shows.
-function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
-  const { Box, Text, Button } = T
+// The gem type header: the drawer chevron, the brand run, a rule, then the
+// mirror run. The runs step down through dark grounds, Abyss to Raised to
+// Elevated, and the type carries the jewel: the model name, the folder and
+// the account run a gradient letter by letter. Alerts keep their fills.
+// Each zigzag edge cuts one ground into the next.
+const BRAND_INK = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean] as const
+// The ground of a minor alert: a dark amber, so Blonde lettering reads on it
+// and no text ever sits on a Blonde fill.
+export const AMBER_GROUND = mixHex(CORE.blonde, CORE.abyss, 0.8)
+// The brand run as a loop, for the drifting header rule.
+const brandAt = loopSampler(BRAND_INK)
+
+type HeaderPlan = { left: Seg[]; right: Seg[]; room: number }
+
+// The segments that fit and the room left for the rule. No drawing happens
+// here, so the sweep clock can size the header rule the same way.
+function headerPlan(d: BandData, inner: number, isCompact: boolean, hasCrest = false): HeaderPlan {
   const id = d.identity
   const u = d.usage
   const left: Seg[] = [
-    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt },
-    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.blueLight, fg: ROLE.text, drop: 1 }] : []),
-    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true, drop: 3 }] : []),
+    // Beside the crest the mark stands in for the ⬢ glyph.
+    hasCrest
+      ? { text: modelLabel(id?.model ?? ''), bg: CORE.abyss, fg: ROLE.text, bold: true, ink: BRAND_INK }
+      : crestFolded(d)
+        // A folded crest: a press on the brand segment opens it.
+        ? { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, ink: BRAND_INK, press: { key: 'crest-toggle', label: `⬢ ${modelLabel(id?.model ?? '')}`, onPress: d.onToggleCrest } }
+        : { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt, ink: BRAND_INK },
+    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.raised, fg: ROLE.text, iconFg: ROLE.teal, ink: [ROLE.sec, ROLE.text], drop: 1 }] : []),
+    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.elevated, fg: ROLE.text, bold: true, iconFg: ROLE.teal, ink: [ROLE.text, ROLE.blondeLt], drop: 3 }] : []),
   ]
   const email = id?.email ?? ''
   // The account list knows the work accounts. The config folder is the guess
@@ -195,9 +252,10 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const isWork = d.accounts.find(a => a.email === email.toLowerCase())?.isWork ?? id?.isWorkAccount ?? false
   const accountSeg: Seg = {
     text: `a: ${email}`,
-    bg: isWork ? CORE.topaz : CORE.emerald,
+    bg: CORE.abyss,
     fg: ROLE.text,
     bold: true,
+    ink: isWork ? [CORE.topaz, ROLE.blondeLt] : [ROLE.emeraldLt, ROLE.teal],
     press: { key: 'account', label: email, hotkey: 'a', onPress: d.onAccounts },
     drop: 4,
   }
@@ -205,8 +263,8 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const outageLabel = o === null ? '' : `⚠ ${o.impact}${o.count > 1 ? ` +${o.count - 1}` : ''}`
   const outageSeg: Seg[] = o === null ? [] : [{
     text: `o: ${outageLabel}`,
-    bg: o.impact === 'minor' ? CORE.blonde : CORE.error,
-    fg: o.impact === 'minor' ? CORE.abyss : ROLE.text,
+    bg: o.impact === 'minor' ? AMBER_GROUND : CORE.error,
+    fg: o.impact === 'minor' ? ROLE.blondeLt : ROLE.text,
     bold: true,
     press: { key: 'outage', label: outageLabel, hotkey: 'o', onPress: d.onOutage },
   }]
@@ -222,8 +280,8 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const lag = d.lag
   const lagSeg: Seg[] = lag === null ? [] : [{
     text: `l: ▲ ${lag.bound} ${lag.pct}%`,
-    bg: lag.level === 'laggy' ? CORE.error : CORE.blonde,
-    fg: lag.level === 'laggy' ? ROLE.text : CORE.abyss,
+    bg: lag.level === 'laggy' ? CORE.error : AMBER_GROUND,
+    fg: lag.level === 'laggy' ? ROLE.text : ROLE.blondeLt,
     bold: true,
     press: { key: 'lag', label: `▲ ${lag.bound} ${lag.pct}%`, hotkey: 'l', onPress: d.onLag },
   }]
@@ -232,8 +290,8 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const warnText = warn === null ? '' : `⚠ ${warn.short}${warn.more > 0 ? ` +${warn.more}` : ''}`
   const warnSeg: Seg[] = warn === null ? [] : [{
     text: `w: ${warnText}`,
-    bg: warn.level === 'crit' ? CORE.error : CORE.blonde,
-    fg: warn.level === 'crit' ? ROLE.text : CORE.abyss,
+    bg: warn.level === 'crit' ? CORE.error : AMBER_GROUND,
+    fg: warn.level === 'crit' ? ROLE.text : ROLE.blondeLt,
     bold: true,
     press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
   }]
@@ -242,76 +300,50 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     ...warnSeg,
     ...outageSeg,
     ...shareSeg,
-    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),
-    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text, drop: 2 }]),
-    ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
+    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.elevated, fg: ROLE.blondeLt, bold: true }]),
+    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.raised, fg: ROLE.sec, drop: 2 }]),
+    ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: AMBER_GROUND, fg: ROLE.blondeLt, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
   // The chevron opens the hint drawer under the prompt. It takes one cell, and
   // the brand segment brings its own leading space.
   const chevron = 1
-  const [fitLeft, fitRight] = fitSegs(left, right, inner - chevron - 2 - MIN_RULE)
+  // Every ground gives its lettering at least 4.5:1, so the edges, which read
+  // the same ground, stay matched.
+  const guard = (s: Seg): Seg => ({ ...s, bg: readableGround(s.bg, s.fg) })
+  const [fitLeft, fitRight] = fitSegs(left.map(guard), right.map(guard), inner - chevron - 2 - MIN_RULE)
   const room = Math.max(0, inner - chevron - segWidth(fitLeft) - segWidth(fitRight) - 2)
+  return { left: fitLeft, right: fitRight, room }
+}
+
+// The cells of the header rule at sweep frame `frame`: a faint brand loop
+// that drifts along it, one space at each end.
+export function headerRulePaints(room: number, frame: number): Paint[] {
+  const dashes = Array.from({ length: room }, (_, i) => ({ glyph: RULE, fg: mixHex(CORE.border, brandAt(i / Math.max(1, room) - frame / SWEEP_FRAMES), 0.55), bg: null }))
+  return [{ glyph: ' ', fg: null, bg: null }, ...dashes, { glyph: ' ', fg: null, bg: null }]
+}
+
+function headerRule(T: Table, d: BandData, room: number): RenderElement {
+  const { Text } = T
+  if (isRuleLive(T, d)) return paintRow(T, d.surface, 'header-rule', headerRulePaints(room, d.sweep))
+  return <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
+}
+
+function header(T: Table, d: BandData, inner: number, isCompact: boolean, hasCrest = false): RenderElement {
+  const { Box, Text, Button } = T
+  const id = d.identity
+  const u = d.usage
+  const { left: fitLeft, right: fitRight, room } = headerPlan(d, inner, isCompact, hasCrest)
   return (
     <Box key="header">
       <Button key="hint-toggle" label={d.isHintOpen ? '▾' : '▸'} plain onPress={d.onToggleHint} />
       {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, fitLeft))}
-      <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
+      {headerRule(T, d, room)}
       {fitRight.length > 0
         ? hoverGroup(T, 'cost', u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`, mirrored(T, fitRight))
         : <Text />}
     </Box>
   )
-}
-
-// --- Account dropdown ------------------------------------------------------------
-
-// The rows under the header while the account dropdown is open. pick lists
-// the accounts, each with its Firefox profile. add takes a new account.
-function accountRows(T: Table, d: BandData): RenderElement[] {
-  const m = d.accountMenu
-  if (m === null) return []
-  const { Box, Text, Button } = T
-  const Select = 'Select' in T ? T.Select : undefined
-  const Input = 'Input' in T ? T.Input : undefined
-  const current = d.identity?.email.toLowerCase() ?? ''
-  const close = <Button key="account-close" label="close" hotkey="x" plain onPress={d.onAccounts} />
-  if (Select === undefined || Input === undefined) {
-    return [<Box key="account-rows" paddingX={1}><Text color={ROLE.muted}>This surface has no picker. Use a terminal or the desktop app.  </Text>{close}</Box>]
-  }
-  if (m.mode === 'pick') {
-    const options = d.accounts.map(a => ({ value: a.email, label: `${a.email === current ? '● ' : '○ '}${accountLabel(a)}` }))
-    const isKnown = d.accounts.some(a => a.email === current)
-    return [
-      <Box key="account-rows" paddingX={1}>
-        <Text color={ROLE.emeraldLt} bold>{'⬢ account  '}</Text>
-        {options.length > 0
-          ? <Select key="account-pick" options={options} value={isKnown ? current : undefined} autoFocus onSelect={value => d.onPickAccount(value)} />
-          : <Text color={ROLE.muted}>no accounts yet</Text>}
-        {spaces(T, 3)}
-        <Button key="account-add" label="new account" hotkey="n" plain onPress={d.onAddAccount} />
-        {spaces(T, 3)}
-        {close}
-        {d.loginEmail === null ? <Text /> : <Text color={ROLE.warn} bold>{`   ◐ signing in as ${d.loginEmail}`}</Text>}
-      </Box>,
-    ]
-  }
-  const profileOptions = [
-    ...d.profiles.map(p => ({ value: p.path, label: p.name })),
-    { value: NEW_PROFILE, label: '+ new Firefox profile' },
-  ]
-  return [
-    <Box key="account-rows" paddingX={1}>
-      <Text color={ROLE.emeraldLt} bold>{'✚ new account  '}</Text>
-      <Input key="account-email" placeholder="email" value={m.draftEmail} autoFocus submitLabel="next" onInput={value => d.onDraftEmail(value)} onSubmit={value => d.onDraftEmail(value)} />
-      {spaces(T, 3)}
-      <Select key="account-profile" label="firefox " options={profileOptions} value={m.draftProfile === '' ? undefined : m.draftProfile} onSelect={value => d.onDraftProfile(value)} />
-      {spaces(T, 3)}
-      <Button key="account-save" label="save" hotkey="s" plain onPress={d.onSaveAccount} />
-      {spaces(T, 3)}
-      <Button key="account-cancel" label="cancel" hotkey="x" plain onPress={d.onCancelAdd} />
-    </Box>,
-  ]
 }
 
 // The folded form under NARROW_COLUMNS: one line of the key figures.
@@ -324,12 +356,27 @@ function compactLine(T: Table, d: BandData): RenderElement | null {
     if (bits.length > 0) bits.push(<Text color={RULE_COLOR}>{'  ◆  '}</Text>)
     bits.push(el)
   }
-  if (u?.fiveHour) add(<Text color={fiveHourColor(u.fiveHour.percent)}>{`5h ${u.fiveHour.percent}%`}</Text>)
-  if (u?.sevenDay) add(<Text color={sevenDayColor(u.sevenDay.percent)}>{`7d ${u.sevenDay.percent}%`}</Text>)
+  if (u?.fiveHour) add(<Text color={usageColor(u.fiveHour.percent)}>{`5h ${u.fiveHour.percent}%`}</Text>)
+  if (u?.sevenDay) add(<Text color={u.sevenDay.percent < 50 ? sevenDayColor(u.sevenDay.percent) : usageColor(u.sevenDay.percent)}>{`7d ${u.sevenDay.percent}%`}</Text>)
   if (u?.ctxPercent !== undefined) add(<Text color={ctxColor(u.ctxPercent, u.ctxTokens)}>{`ctx ${u.ctxPercent}%${isHandoffDue(u.ctxTokens) ? ' ⬢' : ''}`}</Text>)
   if (d.cacheView) add(<Text color={toneColor(d.cacheView.tone)}>{`${HOURGLASS} ${d.cacheView.label}`}</Text>)
   if (g) add(<Text color={ROLE.emeraldLt}>{`⎇ ${g.branch} +${g.insertions} -${g.deletions}`}</Text>)
   return bits.length === 0 ? null : <Box>{bits}</Box>
+}
+
+// A Raster row the sweep clock repaints: its key and its cells at a frame.
+export type LiveStrip = { key: string; frame: (n: number) => string }
+
+// The Raster rows a band draws for `d`, as the sweep clock repaints them:
+// the header rule, then the ledger rules. A folded band has no ledger.
+export function bandStrips(d: BandData): LiveStrip[] {
+  const inner = Math.max(20, d.columns - RESERVE)
+  const isCompact = d.columns < NARROW_COLUMNS
+  const crest = crestWidth(d)
+  const { room } = headerPlan(d, inner - crest, isCompact, crest > 0)
+  const head: LiveStrip = { key: 'header-rule', frame: n => packCells(paintCells(headerRulePaints(room, n))) }
+  const rules = isCompact ? [] : ledgerRules(inner).map((r): LiveStrip => ({ key: r.key, frame: n => ruleFrame(r, n) }))
+  return [head, ...rules]
 }
 
 export function drawBand(T: Table, d: BandData): RenderElement {
@@ -343,6 +390,15 @@ export function drawBand(T: Table, d: BandData): RenderElement {
   // slot under the header holds the account dropdown, or stays empty as a
   // spacer on a wide band.
   const menu = accountRows(T, d)
-  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS ? [<Box key="drawer" height={1} />] : []
+  const emblem = bandEmblem(d)
+  if (emblem !== null) {
+    // The crest: the mark beside the header and the row under it. That row
+    // holds the caption, or the account dropdown while it is open.
+    const side = [header(T, d, inner - crestWidth(d), false, true), ...(menu.length > 0 ? menu : [captionRow(T, d)])]
+    const crest = <Box key="crest">{emblemColumn(T, emblem)}<Box flexDirection="column" flexGrow={1}>{side}</Box></Box>
+    return <Box flexDirection="column" marginTop={1}>{[crest, ...ledgerRows(T, d, inner)]}</Box>
+  }
+  // A folded crest gives its row back, so the band stays compact.
+  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS && !crestFolded(d) ? [<Box key="drawer" height={1} />] : []
   return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...slot, ...ledgerRows(T, d, inner)]}</Box>
 }

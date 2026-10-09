@@ -1,9 +1,10 @@
 // Pure helpers: thresholds, text formats and parsers. Each one mirrors a
 // block of statusline-command.sh, named in its comment.
 
-import { ROLE } from './palette'
+import { mixHex } from './gradient'
+import { CORE, ROLE } from './palette'
 
-export type BarStyle = 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
+export type BarStyle = 'smooth' | 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
 
 // 5h usage: Emerald Lt, Blonde from 50, Ruby from 75.
 export function fiveHourColor(pct: number): string {
@@ -17,6 +18,21 @@ export function sevenDayColor(pct: number): string {
   if (pct >= 75) return ROLE.error
   if (pct >= 50) return ROLE.warn
   return ROLE.sec
+}
+
+// The 5h and 7d bar ramp: Emerald Lt up to 50%. From 50% the colour mixes
+// toward Peridot, a green-yellow, then reaches amber (Blonde) at 75% and
+// Error Lt at 90%. The mix runs in OKLab, so it never passes through grey.
+const USAGE_STOPS: readonly (readonly [number, string])[] = [[50, ROLE.emeraldLt], [62.5, CORE.peridot], [75, ROLE.warn], [90, ROLE.error]]
+
+export function usageColor(pct: number): string {
+  if (pct <= 50) return ROLE.emeraldLt
+  for (let k = 0; k < USAGE_STOPS.length - 1; k++) {
+    const [a, from] = USAGE_STOPS[k] as readonly [number, string]
+    const [b, to] = USAGE_STOPS[k + 1] as readonly [number, string]
+    if (pct <= b) return mixHex(from, to, (pct - a) / (b - a))
+  }
+  return ROLE.error
 }
 
 // ctx: Teal, orange from 50 percent, Ruby from 128k tokens absolute.
@@ -66,6 +82,8 @@ export function untilReset(resetsAt: number | undefined, now: number): string {
 export type BarCell = { glyph: string; isFilled: boolean }
 
 const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
+  // smooth draws through smoothCells. These glyphs serve barCells alone.
+  smooth: ['█', ' '],
   line: ['━', '─'],
   hex: ['⬢', '⬡'],
   diamond: ['◆', '◇'],
@@ -77,6 +95,7 @@ const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
 // band stretches a bar to the width of its cell with `length`. The wave style
 // alternates up and down triangles and scrolls by `shift` (0 to 3).
 export function barCells(pct: number, style: BarStyle, shift: number, length = 8): BarCell[] {
+  if (style === 'line') return lineCells(pct, length)
   const filled = Math.max(0, Math.min(length, Math.floor((pct * length + 50) / 100)))
   return Array.from({ length }, (_, i) => {
     const isFilled = i < filled
@@ -86,6 +105,33 @@ export function barCells(pct: number, style: BarStyle, shift: number, length = 8
     }
     const [full, empty] = GLYPHS[style]
     return { glyph: isFilled ? full : empty, isFilled }
+  })
+}
+
+// The eighth blocks, from empty to full. Index n fills n eighths of a cell.
+const EIGHTHS = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'] as const
+
+export type SmoothCell = { glyph: string; fill: number }
+
+// The smooth bar: each cell fills in eighths, so a bar of `length` cells
+// shows `length * 8` steps. `fill` is the part of the cell filled, 0 to 1.
+export function smoothCells(pct: number, length: number): SmoothCell[] {
+  const units = Math.max(0, Math.min(length * 8, Math.round((pct * length * 8) / 100)))
+  return Array.from({ length }, (_, i) => {
+    const n = Math.max(0, Math.min(8, units - i * 8))
+    return { glyph: EIGHTHS[n] ?? ' ', fill: n / 8 }
+  })
+}
+
+// The line bar fills in half cells: a full rule `━`, then a half cap `╸` when
+// the percent ends inside a cell. The bar stays thin and shows twice the steps.
+function lineCells(pct: number, length: number): BarCell[] {
+  const halves = Math.max(0, Math.min(length * 2, Math.round((pct * length * 2) / 100)))
+  return Array.from({ length }, (_, i) => {
+    const n = halves - i * 2
+    if (n >= 2) return { glyph: '━', isFilled: true }
+    if (n === 1) return { glyph: '╸', isFilled: true }
+    return { glyph: '─', isFilled: false }
   })
 }
 

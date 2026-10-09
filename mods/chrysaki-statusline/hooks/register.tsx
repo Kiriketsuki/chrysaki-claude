@@ -7,8 +7,10 @@ import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFi
 import type { AlertAction, CacheFileHost } from './cache'
 import { mergeIdentity, readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
 import type { Host } from './collect'
-import { drawBand } from './draw'
-import { SWEEP_FRAMES } from './ledger'
+import { DEFAULT_EMBLEM } from './crest'
+import { bandStrips, drawBand } from './draw'
+import type { BandData, LiveStrip } from './draw'
+import { SWEEP_FRAMES, isRuleLive } from './ledger'
 import type { BarStyle } from './format'
 import { kilo } from './format'
 import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from './limits'
@@ -19,6 +21,8 @@ import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff }
 import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
 import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
+import { EMPTY_HISTORY, addSample, addTokens, historyKey, parseHistory } from './history'
+import type { UsageHistory } from './history'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
 
 export { HANDOFF_FILE }
@@ -40,18 +44,24 @@ const profiles = atom({ plugin: 'chrysaki-statusline', key: 'profiles' } as cons
 const accountMenu = atom({ plugin: 'chrysaki-statusline', key: 'accountMenu' } as const, null as AccountMenu | null)
 const login = atom({ plugin: 'chrysaki-statusline', key: 'login' } as const, null as PendingLogin | null)
 const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as const, false)
-const sweep = atom({ plugin: 'chrysaki-statusline', key: 'sweep' } as const, 0)
+// The crest starts folded. A wide band spends two rows on it while open.
+const crestOpen = atom({ plugin: 'chrysaki-statusline', key: 'crestOpen' } as const, false)
 const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
 const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
 const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
 const warn = atom({ plugin: 'chrysaki-statusline', key: 'warn' } as const, null as StatuslineWarn | null)
 const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
+const usageHistory = atom({ plugin: 'chrysaki-statusline', key: 'usageHistory' } as const, EMPTY_HISTORY as UsageHistory)
+const ctxHistory = atom({ plugin: 'chrysaki-statusline', key: 'ctxHistory' } as const, [] as number[])
 
 // The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
+// Each step repaints the rule Rasters with $.ui.blit. The band does not draw again.
 const SWEEP_MS = 150
 
 // The $.store key that keeps the drawer open or closed across sessions.
 const HINT_OPEN_KEY = 'hintOpen'
+// The $.store key that keeps the crest open or folded across sessions.
+const CREST_OPEN_KEY = 'crestOpen'
 
 // A login the switcher started gives BROWSER back after this long, even when
 // the account never changed.
@@ -169,13 +179,30 @@ async function rollLimits($: EngineInterface): Promise<void> {
   if (rolled !== u) await update($, usage, () => rolled)
 }
 
-// Saves a fresh rate-limit reading for the next session to start from.
+// Saves a fresh rate-limit reading for the next session to start from, and
+// adds it to the history the sparks draw.
 async function saveLimits($: EngineInterface, u: StatuslineUsage): Promise<void> {
-  const saved = toSaved(u, await $.clock.now())
+  const now = await $.clock.now()
+  const saved = toSaved(u, now)
   if (saved === null) return
   try {
     const email = (await read($, identity))?.email ?? 'unknown'
     await $.store.set(limitsKey(email), saved)
+    const h = addSample(await read($, usageHistory), u, now)
+    await update($, usageHistory, () => h)
+    await $.store.set(historyKey(email), h)
+  } catch (error) {
+    logFailure($, error)
+  }
+}
+
+// Reads the account's usage history from the store. Another session may have
+// added samples since this one last read it.
+async function loadHistory($: EngineInterface): Promise<void> {
+  try {
+    const email = (await read($, identity))?.email ?? 'unknown'
+    const raw = await $.store.get(historyKey(email)).catch(() => undefined)
+    await update($, usageHistory, () => parseHistory(raw))
   } catch (error) {
     logFailure($, error)
   }
@@ -508,6 +535,17 @@ async function toggleHint($: EngineInterface): Promise<void> {
   await $.store.set(HINT_OPEN_KEY, next).catch(error => logFailure($, error))
 }
 
+async function loadCrestOpen($: EngineInterface): Promise<void> {
+  const v = await $.store.get(CREST_OPEN_KEY).catch(() => undefined)
+  await update($, crestOpen, () => v === true)
+}
+
+async function toggleCrest($: EngineInterface): Promise<void> {
+  const next = !(await read($, crestOpen))
+  await update($, crestOpen, () => next)
+  await $.store.set(CREST_OPEN_KEY, next).catch(error => logFailure($, error))
+}
+
 // The outage badge opens the incident page in the browser.
 async function openOutage($: EngineInterface, o: StatuslineOutage | null): Promise<void> {
   if (o === null) return
@@ -547,6 +585,21 @@ type Runtime = {
   // Reads and clears the flag that forces the next GitHub read.
   takeRemoteDue: () => boolean
   isTurnRunning: () => boolean
+  // Moves the rule sweep one frame. Returns the new frame and the rules
+  // the last band drew, or null when no rule is live.
+  stepSweep: () => { frame: number; live: LiveRules | null }
+}
+
+// The Raster rows of the last band drawn, and the site that holds them.
+type LiveRules = { requestId: string; strips: LiveStrip[] }
+
+// Repaints the live rules at the next sweep frame. A blit the surface
+// refuses, such as one before the band mounts, costs nothing. The next draw
+// records the rules again.
+async function sweepRules($: EngineInterface, rt: Runtime): Promise<void> {
+  const { frame, live } = rt.stepSweep()
+  if (live === null) return
+  await Promise.all(live.strips.map(r => $.ui.blit({ requestId: live.requestId, key: r.key, cells: r.frame(frame) }).catch(() => ({}))))
 }
 
 // Reads every value the band draws and starts the timers. session.start
@@ -556,8 +609,10 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   for (const t of old) t.cancel()
   $.clock.after(0, () => { void loadAccounts($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
+  $.clock.after(0, () => { void loadCrestOpen($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => {
     void refreshFast($)
+      .then(() => loadHistory($))
       .then(() => seedUsage($))
       .then(() => refreshLimits($, false))
       .then(() => refreshRemote($, true))
@@ -584,12 +639,14 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
     $.clock.every(CACHE_TICK_MS, () => { void refreshResume(handoffHostOf($)) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshLag($) }),
     ...(rt.isAnimated ? [$.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })] : []),
-    ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void update($, sweep, n => (n + 1) % SWEEP_FRAMES) })] : []),
+    ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void sweepRules($, rt) })] : []),
   ]
 }
 
 export const register: Register = (on, options) => {
   const barStyle = String(options.barStyle ?? 'line') as BarStyle
+  const emblem = String(options.emblem ?? DEFAULT_EMBLEM)
+  const caption = String(options.caption ?? '')
   const isAnimated = String(options.animate ?? 'off') === 'on'
   const isRuleAnimated = String(options.ruleAnimation ?? 'on') === 'on'
   const usdToSgd = Number(options.usdToSgd ?? '1.35') || 1.35
@@ -612,6 +669,10 @@ export const register: Register = (on, options) => {
   // for the next one, so the band's next draw starts it.
   let isReseedDue = false
   let reseedAt = 0
+  // The sweep frame lives here, not in $.state: a state write draws the band
+  // again, and the sweep only repaints the rule cells.
+  let sweepFrame = 0
+  let liveRules: LiveRules | null = null
   const rt: Runtime = {
     cacheConfig,
     isAnimated,
@@ -622,6 +683,10 @@ export const register: Register = (on, options) => {
       return was
     },
     isTurnRunning: () => isTurnRunning,
+    stepSweep: () => {
+      sweepFrame = (sweepFrame + 1) % SWEEP_FRAMES
+      return { frame: sweepFrame, live: liveRules }
+    },
   }
 
   on('session.start', async ($, e, next) => {
@@ -642,6 +707,7 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const now = await $.clock.now()
     await update($, usage, prev => rollUsage(usageFromMeasure(e, prev), now))
+    if (e.changed.includes('context')) await update($, ctxHistory, h => addTokens(h, e.context?.tokens))
     if (e.changed.includes('rateLimits')) await saveLimits($, usageFrom(e))
     return next(e)
   })
@@ -725,7 +791,10 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey) {
+      liveRules = null
+      return next(e)
+    }
     const below = await next(e)
     const table = $.ui.resolve(e)
     const [u, id, g, r, n, ph, now, home] = await Promise.all([
@@ -738,6 +807,7 @@ export const register: Register = (on, options) => {
     const [accountList, profileList, menu, pendingLogin, isHintOpen] = await Promise.all([
       read($, accounts), read($, profiles), read($, accountMenu), read($, login), read($, hintOpen),
     ])
+    const isCrestOpen = await read($, crestOpen)
     // The first draw of a session after a /clear finds empty state. It starts
     // the reads itself, at most once in 10 seconds, and draws the last known
     // identity meanwhile.
@@ -747,7 +817,8 @@ export const register: Register = (on, options) => {
       clocks = startup($, rt, clocks)
     }
     const [fetchState, down, offer, lagNow, warnNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag), read($, warn)])
-    const band = drawBand(table, {
+    const [hist, ctxHist] = await Promise.all([read($, usageHistory), read($, ctxHistory)])
+    const data: BandData = {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       isLimitsBusy: fetchState.isBusy,
       onRefreshLimits: () => { void refreshLimits($, true) },
@@ -758,7 +829,8 @@ export const register: Register = (on, options) => {
       lag: lagNow,
       warn: warnNow,
       onLag: () => { void openLag($, lagNow) },
-      columns: e.props.bodyColumns, barStyle, isRuleAnimated, sweep: isRuleAnimated ? await read($, sweep) : 0, usdToSgd,
+      history: hist, ctxHistory: ctxHist,
+      columns: e.props.bodyColumns, emblem, caption, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
       onGit: () => { void openGitPane($) },
@@ -779,7 +851,11 @@ export const register: Register = (on, options) => {
       onSaveAccount: () => { void saveDraft($) },
       isHintOpen,
       onToggleHint: () => { void toggleHint($) },
-    })
+      isCrestOpen,
+      onToggleCrest: () => { void toggleCrest($) },
+    }
+    liveRules = isRuleLive(table, data) ? { requestId: e.requestId, strips: bandStrips(data) } : null
+    const band = drawBand(table, data)
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band
   })
