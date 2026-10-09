@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn } from '../types'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn, StatuslineCodeks } from '../types'
 import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
 import type { AlertAction, CacheFileHost } from './cache'
@@ -20,6 +20,7 @@ import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff }
 import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
 import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
+import { CODEKS_FILE, codeksFrom } from './codeksfile'
 import { EMPTY_HISTORY, addSample, addTokens, historyKey, parseHistory } from './history'
 import type { UsageHistory } from './history'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
@@ -47,6 +48,7 @@ const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } a
 const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
 const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
 const warn = atom({ plugin: 'chrysaki-statusline', key: 'warn' } as const, null as StatuslineWarn | null)
+const codeks = atom({ plugin: 'chrysaki-statusline', key: 'codeks' } as const, null as StatuslineCodeks | null)
 const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
 const usageHistory = atom({ plugin: 'chrysaki-statusline', key: 'usageHistory' } as const, EMPTY_HISTORY as UsageHistory)
 const ctxHistory = atom({ plugin: 'chrysaki-statusline', key: 'ctxHistory' } as const, [] as number[])
@@ -517,6 +519,23 @@ async function openLag($: EngineInterface, l: StatuslineLag | null): Promise<voi
   else if (l !== null) $.ui.toast(l.top.length > 0 ? l.top.join(' · ') : 'No cause stands out.', { timeoutMs: 8000 })
 }
 
+// --- codeKs badge ----------------------------------------------------------------
+
+// Reads the codeKs heartbeat. The badge shows while the codeks mod is loaded or
+// a heartbeat exists, so a stopped service shows as off and never disappears.
+async function refreshCodeks($: EngineInterface): Promise<void> {
+  const [dir, now, commands] = await Promise.all([$.env.get('XDG_RUNTIME_DIR'), $.clock.now(), $.command.list().catch(() => [])])
+  const text = await $.fs.read(`${dir ?? '/tmp'}/${CODEKS_FILE}`).catch(() => null)
+  const next = codeksFrom(typeof text === 'string' ? text : null, now, commands.some(c => c.name === 'codex'))
+  if (JSON.stringify(next) !== JSON.stringify(await read($, codeks))) await update($, codeks, () => next)
+}
+
+// The badge opens the codeKs panel when the codeks mod is loaded.
+async function openCodeks($: EngineInterface): Promise<void> {
+  if ((await $.command.list().catch(() => [])).some(c => c.name === 'codex')) await $.command.run({ command: 'codex', args: 'panel' })
+  else $.ui.toast('codeKs runs, but its mod is not loaded here. Run: ./install.sh --claude-mod', { timeoutMs: 8000 })
+}
+
 // --- Hint drawer ----------------------------------------------------------------
 
 async function loadHintOpen($: EngineInterface): Promise<void> {
@@ -606,6 +625,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   // The resume key looks at the clipboard on the same clock as the cache.
   $.clock.after(0, () => { void refreshResume(handoffHostOf($)) })
   $.clock.after(0, () => { void refreshLag($) })
+  $.clock.after(0, () => { void refreshCodeks($) })
   return [
     $.clock.every(REFRESH_MS, () => {
       const isForced = rt.takeRemoteDue()
@@ -621,6 +641,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
     $.clock.every(CACHE_TICK_MS, () => { void tickCache($, rt.cacheConfig, rt.isTurnRunning()) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshResume(handoffHostOf($)) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshLag($) }),
+    $.clock.every(CACHE_TICK_MS, () => { void refreshCodeks($) }),
     ...(rt.isAnimated ? [$.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })] : []),
     ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void sweepRules($, rt) })] : []),
   ]
@@ -796,7 +817,7 @@ export const register: Register = (on, options) => {
       reseedAt = now
       clocks = startup($, rt, clocks)
     }
-    const [fetchState, down, offer, lagNow, warnNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag), read($, warn)])
+    const [fetchState, down, offer, lagNow, warnNow, codeksNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag), read($, warn), read($, codeks)])
     const [hist, ctxHist] = await Promise.all([read($, usageHistory), read($, ctxHistory)])
     const data: BandData = {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
@@ -809,6 +830,8 @@ export const register: Register = (on, options) => {
       lag: lagNow,
       warn: warnNow,
       onLag: () => { void openLag($, lagNow) },
+      codeks: codeksNow,
+      onCodeks: () => { void openCodeks($) },
       history: hist, ctxHistory: ctxHist,
       columns: e.props.bodyColumns, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
       onContext: () => { void toastBreakdown($) },

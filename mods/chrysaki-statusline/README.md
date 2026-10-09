@@ -38,6 +38,19 @@ The engine pushes rate limits from API response headers after each turn. The mod
 
 Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.json`. While an incident is open, the header shows `o: ⚠ <impact>`. The badge is Blonde for a minor incident and Error for a major one. `+N` counts the other open incidents. Press `ctrl+x tab`, then `o`, or click the badge to open the status page.
 
+## codeKs badge
+
+The mod reads the heartbeat that `codeks inboxd` writes at `$XDG_RUNTIME_DIR/codeks/state.json` every 5 seconds. codeKs connects Claude Code and the Codex CLI.
+
+| Badge | Meaning |
+|---|---|
+| `x: ◆ codex 2` | The Codex app-server answers. 2 Codex threads are live. |
+| `x: ◆ codex 2 ▸1` | As above, and 1 thread is working. The ground turns Teal. |
+| `x: ✕ codex` | inboxd runs, but the app-server does not answer. The ground is Error. |
+| `x: ○ codex off` | The codeks mod is loaded, but no heartbeat is younger than 20 seconds. |
+
+Without the codeks mod and without a heartbeat, no badge shows. A fault badge never drops. A healthy badge drops with the session clock. Press `ctrl+x tab`, then `x`, or click the badge to open the codeKs panel (`/codex panel`).
+
 ## Share key
 
 The two work accounts, jlim@aurrigo.com and limj@aurrigo.com, share each new artifact with each other. Neither the Artifact tool nor the plugin API can share an artifact, so the mod opens the page and the person shares it.
