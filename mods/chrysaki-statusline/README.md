@@ -43,18 +43,9 @@ Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.jso
 
 Other mods and processes add segments to the header through the band protocol. A contributor writes `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`, and the mod lists that folder every 3 seconds. Each fresh item draws as a header segment in the tone it asks for. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
 
-## codeKs badge
+## codeKs
 
-The mod reads the heartbeat that `codeks inboxd` writes at `$XDG_RUNTIME_DIR/codeks/state.json` every 5 seconds. codeKs connects Claude Code and the Codex CLI.
-
-| Badge | Meaning |
-|---|---|
-| `x: ◆ codex 2` | The Codex app-server answers. 2 Codex threads are live. |
-| `x: ◆ codex 2 ▸1` | As above, and 1 thread is working. The ground turns Teal. |
-| `x: ✕ codex` | inboxd runs, but the app-server does not answer. The ground is Error. |
-| `x: ○ codex off` | Claude Code loads the codeks mod, but no heartbeat is younger than 20 seconds. |
-
-Without the codeks mod and without a heartbeat, no badge shows. A fault badge never drops. A healthy badge drops with the session clock. Press `ctrl+x tab`, then `x`, or click the badge to open the codeKs panel (`/codex panel`).
+codeKs connects Claude Code and the Codex CLI. It publishes its status through the band protocol, as the `codeks` and `codeks-off` sources, so this mod has no code of its own for it. The segment shows the live Codex threads, and press `c` to open the codeKs panel.
 
 ## Share key
 

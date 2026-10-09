@@ -7,7 +7,7 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineCodeks, BandEntry, BandTone } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, BandEntry, BandTone } from '../types'
 import { iconFor } from './band'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
@@ -62,9 +62,6 @@ export type BandData = {
   lag: StatuslineLag | null
   warn: StatuslineWarn | null
   onLag: () => void
-  // The codeKs badge, and the press that opens the codeKs panel.
-  codeks: StatuslineCodeks | null
-  onCodeks: () => void
   // The items other mods contribute through the band protocol, and a press.
   band: BandEntry[]
   onBand: (entry: BandEntry) => void
@@ -323,25 +320,10 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean, hasCrest = f
     bold: true,
     press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
   }]
-  // The codeKs badge from the codeks heartbeat. A fault never drops. A healthy
-  // badge drops with the session clock, before the folder and the account.
-  const cx = d.codeks
-  const cxText = cx === null ? '' : cx.state === 'up'
-    ? `◆ codex ${cx.live}${cx.active > 0 ? ` ▸${cx.active}` : ''}`
-    : cx.state === 'down' ? '✕ codex' : '○ codex off'
-  const codeksSeg: Seg[] = cx === null ? [] : [{
-    text: `x: ${cxText}`,
-    bg: cx.state === 'down' ? CORE.error : cx.state === 'off' ? AMBER_GROUND : cx.active > 0 ? CORE.teal : CORE.elevated,
-    fg: cx.state === 'down' || cx.active > 0 ? ROLE.text : cx.state === 'off' ? ROLE.blondeLt : ROLE.emeraldLt,
-    bold: cx.state !== 'up',
-    press: { key: 'codeks', label: cxText, hotkey: 'x', onPress: d.onCodeks },
-    ...(cx.state === 'up' ? { drop: 2 } : {}),
-  }]
   const bandSegs = d.band.map(e => bandSeg(d, e))
   const right: Seg[] = [
     ...lagSeg,
     ...warnSeg,
-    ...codeksSeg,
     ...bandSegs,
     ...outageSeg,
     ...shareSeg,
