@@ -382,6 +382,18 @@ test('off the terminal the animated rule draws a still gradient of Text', async 
   await ui.unmount()
 })
 
+test('a braille spark follows each usage bar and the context bar', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  for (const columns of [238, 130]) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
+    for (const key of ['spark-5h', 'spark-7d', 'spark-ctx']) {
+      expect((await ui.find({ type: 'Raster', key }))?.props.columns).toBe(8)
+    }
+    await ui.unmount()
+  }
+})
+
 test('the plan gives git the rest of a wide band and stacks it on a narrow one', async () => {
   const wide = planLedger(237)
   expect(wide.isInline).toBe(true)

@@ -7,6 +7,12 @@ export type StatuslineWindow = {
   resetsAt?: number
 }
 
+// One rate-limit reading: epoch milliseconds, then the percent used.
+export type Sample = readonly [number, number]
+
+// The 5h and 7d readings over time, per account, for the braille sparks.
+export type UsageHistory = { fiveHour: Sample[]; sevenDay: Sample[] }
+
 export type StatuslineUsage = {
   ctxPercent?: number
   ctxTokens?: number
@@ -199,6 +205,10 @@ declare module 'claude-code' {
       // The lag badge, or null while the machine is calm.
       lag: StatuslineLag | null
       warn: StatuslineWarn | null
+      // The 5h and 7d readings over time, for the sparks.
+      usageHistory: UsageHistory
+      // The last context token counts of this session.
+      ctxHistory: number[]
     }
   }
 }

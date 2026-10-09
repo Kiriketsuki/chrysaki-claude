@@ -20,6 +20,8 @@ import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff }
 import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
 import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
+import { EMPTY_HISTORY, addSample, addTokens, historyKey, parseHistory } from './history'
+import type { UsageHistory } from './history'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
 
 export { HANDOFF_FILE }
@@ -46,6 +48,8 @@ const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, n
 const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
 const warn = atom({ plugin: 'chrysaki-statusline', key: 'warn' } as const, null as StatuslineWarn | null)
 const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
+const usageHistory = atom({ plugin: 'chrysaki-statusline', key: 'usageHistory' } as const, EMPTY_HISTORY as UsageHistory)
+const ctxHistory = atom({ plugin: 'chrysaki-statusline', key: 'ctxHistory' } as const, [] as number[])
 
 // The step of the animated rule. 40 steps of 150 ms make one 6-second cycle.
 // Each step repaints the rule Rasters with $.ui.blit. The band does not draw again.
@@ -170,13 +174,30 @@ async function rollLimits($: EngineInterface): Promise<void> {
   if (rolled !== u) await update($, usage, () => rolled)
 }
 
-// Saves a fresh rate-limit reading for the next session to start from.
+// Saves a fresh rate-limit reading for the next session to start from, and
+// adds it to the history the sparks draw.
 async function saveLimits($: EngineInterface, u: StatuslineUsage): Promise<void> {
-  const saved = toSaved(u, await $.clock.now())
+  const now = await $.clock.now()
+  const saved = toSaved(u, now)
   if (saved === null) return
   try {
     const email = (await read($, identity))?.email ?? 'unknown'
     await $.store.set(limitsKey(email), saved)
+    const h = addSample(await read($, usageHistory), u, now)
+    await update($, usageHistory, () => h)
+    await $.store.set(historyKey(email), h)
+  } catch (error) {
+    logFailure($, error)
+  }
+}
+
+// Reads the account's usage history from the store. Another session may have
+// added samples since this one last read it.
+async function loadHistory($: EngineInterface): Promise<void> {
+  try {
+    const email = (await read($, identity))?.email ?? 'unknown'
+    const raw = await $.store.get(historyKey(email)).catch(() => undefined)
+    await update($, usageHistory, () => parseHistory(raw))
   } catch (error) {
     logFailure($, error)
   }
@@ -574,6 +595,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => {
     void refreshFast($)
+      .then(() => loadHistory($))
       .then(() => seedUsage($))
       .then(() => refreshLimits($, false))
       .then(() => refreshRemote($, true))
@@ -666,6 +688,7 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const now = await $.clock.now()
     await update($, usage, prev => rollUsage(usageFromMeasure(e, prev), now))
+    if (e.changed.includes('context')) await update($, ctxHistory, h => addTokens(h, e.context?.tokens))
     if (e.changed.includes('rateLimits')) await saveLimits($, usageFrom(e))
     return next(e)
   })
@@ -774,6 +797,7 @@ export const register: Register = (on, options) => {
       clocks = startup($, rt, clocks)
     }
     const [fetchState, down, offer, lagNow, warnNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag), read($, warn)])
+    const [hist, ctxHist] = await Promise.all([read($, usageHistory), read($, ctxHistory)])
     const data: BandData = {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
       isLimitsBusy: fetchState.isBusy,
@@ -785,6 +809,7 @@ export const register: Register = (on, options) => {
       lag: lagNow,
       warn: warnNow,
       onLag: () => { void openLag($, lagNow) },
+      history: hist, ctxHistory: ctxHist,
       columns: e.props.bodyColumns, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,

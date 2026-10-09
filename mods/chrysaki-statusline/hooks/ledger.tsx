@@ -18,6 +18,7 @@ import { frameColor, hoverGroup, spaces, truncate } from './prims'
 import type { Table } from './prims'
 import { hasRaster, packCells, paintCells } from './raster'
 import type { Paint } from './raster'
+import { FIVE_HOURS_MS, SEVEN_DAYS_MS, SPARK_CELLS, recentTokens, windowBuckets } from './history'
 
 // Empty bar cells: dim sockets in the Border colour.
 const SOCKET = CORE.border
@@ -220,14 +221,49 @@ function cell(T: Table, key: string, width: number, children: RenderElement[]): 
   return <Box key={key} width={width} overflow="hidden">{children}</Box>
 }
 
-// badge 6, edge and space 2, bar, 1, percent 4, 1, reset 8.
-export function usageWidth(bar: number): number {
-  return 6 + 2 + bar + 1 + FIG + 1 + 8
+// The bar length and the spark length of a band. A spark of 0 draws none.
+export type Geom = { bar: number; spark: number }
+
+// The cells a spark takes, its trailing space included.
+function sparkRoom(g: Geom): number {
+  return g.spark === 0 ? 0 : g.spark + 1
 }
 
-// badge 9, edge and space 2, bar, 1, figure 4, 1, amount 10, 1, key 12.
-export function contextWidth(bar: number): number {
-  return 9 + 2 + bar + 1 + FIG + 1 + AMOUNT + 1 + KEY
+// badge 6, cap and space 2, bar, 1, percent 4, 1, spark, reset 8.
+export function usageWidth(g: Geom): number {
+  return 6 + 2 + g.bar + 1 + FIG + 1 + sparkRoom(g) + 8
+}
+
+// badge 9, cap and space 2, bar, 1, figure 4, 1, spark, amount 10, 1, key 12.
+export function contextWidth(g: Geom): number {
+  return 9 + 2 + g.bar + 1 + FIG + 1 + sparkRoom(g) + AMOUNT + 1 + KEY
+}
+
+// --- Sparks ----------------------------------------------------------------------
+
+// Eight braille heights, from one dot to a full cell.
+const SPARK_GLYPHS = ['⡀', '⣀', '⣄', '⣤', '⣦', '⣶', '⣷', '⣿'] as const
+
+// The cells of a braille spark. `level` maps a value to 0 to 100 for its
+// height. A null bucket is still ahead in the window, or before the first
+// reading: one dim dot in the Border colour.
+export function sparkPaints(values: readonly (number | null)[], level: (v: number) => number, color: (v: number) => string): Paint[] {
+  return values.map(v => {
+    if (v === null) return { glyph: SPARK_GLYPHS[0], fg: CORE.border, bg: null }
+    const i = Math.max(0, Math.min(7, Math.floor(level(v) / 12.5)))
+    return { glyph: SPARK_GLYPHS[i] ?? '⡀', fg: color(v), bg: null }
+  })
+}
+
+function sparkRow(T: Table, d: BandData, key: string, paints: readonly Paint[]): RenderElement[] {
+  return [paintRow(T, d.surface, `spark-${key}`, paints), spaces(T, 1)]
+}
+
+// The context colour of a token count: the token zones of the ctx bar.
+function tokenColor(tokens: number): string {
+  if (tokens >= CTX_RED_TOKENS) return ROLE.error
+  if (tokens >= CTX_AMBER_TOKENS) return ROLE.blondeLt
+  return ROLE.emeraldLt
 }
 
 // The reset figure. A press reads the usage endpoint now. The arrow turns
@@ -248,23 +284,27 @@ function scopedText(d: BandData): string {
   return list.map(s => ` · ${s.label} ${s.percent}%`).join('')
 }
 
-function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | undefined, bar: number): RenderElement {
+function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | undefined, g: Geom): RenderElement {
   const pct = w?.percent ?? 0
   const head = badge(T, { key: label, text: label, gem: label === '5h' ? GEMS.emerald : GEMS.teal, width: 6 })
   if (w === undefined) {
-    return cell(T, `cell-${label}`, usageWidth(bar), [...head, emptyBar(T, d, label, bar), spaces(T, 1 + FIG + 1), resetKey(T, d, label, 'read')])
+    return cell(T, `cell-${label}`, usageWidth(g), [...head, emptyBar(T, d, label, g.bar), spaces(T, 1 + FIG + 1 + sparkRoom(g)), resetKey(T, d, label, 'read')])
   }
-  const b = zoneBar(T, d, label, pct, USAGE_SCALE, bar)
+  const b = zoneBar(T, d, label, pct, USAGE_SCALE, g.bar)
+  const samples = label === '5h' ? d.history.fiveHour : d.history.sevenDay
+  const span = label === '5h' ? FIVE_HOURS_MS : SEVEN_DAYS_MS
+  const spark = g.spark === 0 ? [] : sparkRow(T, d, label, sparkPaints(windowBuckets(samples, w.resetsAt, span, d.now, g.spark), v => v, usageColor))
   const reset = untilReset(w.resetsAt, d.now)
   const when = w.resetsAt === undefined ? 'reset time unknown' : `resets ${new Date(w.resetsAt).toISOString().slice(11, 16)} UTC, in ${reset}`
   const extra = label === '7d' ? scopedText(d) : ''
-  return cell(T, `cell-${label}`, usageWidth(bar), [
+  return cell(T, `cell-${label}`, usageWidth(g), [
     ...head,
-    hoverGroup(T, `win-${label}`, `${label} window · ${pct}% used · ${when}${extra} · press the reset time to read usage now`, [
+    hoverGroup(T, `win-${label}`, `${label} window · ${pct}% used · ${when}${extra} · the spark shows the window so far · press the reset time to read usage now`, [
       b.el,
       spaces(T, 1),
       fig(T, `${pct}%`, FIG, b.reached, { bold: true, right: true }),
       spaces(T, 1),
+      ...spark,
       resetKey(T, d, label, reset === '' ? 'read' : reset),
     ]),
   ])
@@ -282,27 +322,30 @@ function contextKey(T: Table, d: BandData, tokens: number | undefined): RenderEl
   return <Box key="handoff-key" width={KEY} flexShrink={0} overflow="hidden"><Text color={ROLE.blondeLt} bold>⬢ </Text><Button key="handoff" label="handoff" hotkey="h" plain onPress={d.onHandoff} /></Box>
 }
 
-function contextCell(T: Table, d: BandData, bar: number): RenderElement {
+function contextCell(T: Table, d: BandData, g: Geom): RenderElement {
   const { Text } = T
   const u = d.usage
   const tokens = u?.ctxTokens
   const head = badge(T, { key: 'ctx-detail', text: '', gem: GEMS.blue, width: 9, press: { label: 'ctx', onPress: d.onContext } })
   if (u?.ctxPercent === undefined) {
     const name = d.resumePath === null ? 'no context yet' : d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
-    return cell(T, 'cell-ctx', contextWidth(bar), [
-      ...head, emptyBar(T, d, 'ctx', bar), spaces(T, 1 + FIG + 1), fig(T, name, AMOUNT, ROLE.muted), spaces(T, 1), contextKey(T, d, undefined),
+    return cell(T, 'cell-ctx', contextWidth(g), [
+      ...head, emptyBar(T, d, 'ctx', g.bar), spaces(T, 1 + FIG + 1 + sparkRoom(g)), fig(T, name, AMOUNT, ROLE.muted), spaces(T, 1), contextKey(T, d, undefined),
     ])
   }
-  const b = zoneBar(T, d, 'ctx', u.ctxPercent, zoneScale(contextZones(u.ctxWindow)), bar)
+  const b = zoneBar(T, d, 'ctx', u.ctxPercent, zoneScale(contextZones(u.ctxWindow)), g.bar)
+  // The context spark: the last token counts, full height at the amber line.
+  const spark = g.spark === 0 ? [] : sparkRow(T, d, 'ctx', sparkPaints(recentTokens(d.ctxHistory, g.spark), v => (v / CTX_AMBER_TOKENS) * 100, tokenColor))
   const used = tokens === undefined ? '' : kilo(tokens)
   const of = `/${kilo(u.ctxWindow)}`
-  return cell(T, 'cell-ctx', contextWidth(bar), [
+  return cell(T, 'cell-ctx', contextWidth(g), [
     ...head,
-    hoverGroup(T, 'ctx', `context ${u.ctxPercent}% · ${tokens ?? '?'} of ${u.ctxWindow} tokens · amber from 250k, red from 500k · handoff at 100k · press ctx for the breakdown`, [
+    hoverGroup(T, 'ctx', `context ${u.ctxPercent}% · ${tokens ?? '?'} of ${u.ctxWindow} tokens · amber from 250k, red from 500k · handoff at 100k · the spark shows the last turns · press ctx for the breakdown`, [
       b.el,
       spaces(T, 1),
       fig(T, `${u.ctxPercent}%`, FIG, b.reached, { bold: true, right: true }),
       spaces(T, 1),
+      ...spark,
       <Text><Text color={ROLE.text} bold>{used}</Text><Text color={ROLE.sec}>{truncate(of, AMOUNT - used.length).padEnd(AMOUNT - used.length)}</Text></Text>,
       spaces(T, 1),
       contextKey(T, d, tokens),
@@ -312,24 +355,24 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
 
 const CACHE_STATE = { warm: '● warm', warning: '◐ cooling', cold: '○ cold' } as const
 
-function cacheCell(T: Table, d: BandData, bar: number): RenderElement {
+function cacheCell(T: Table, d: BandData, g: Geom): RenderElement {
   const head = badge(T, { key: 'cache', text: '⧗ cache', gem: GEMS.amethyst, width: 9 })
   const c = d.cache
   const v = d.cacheView
   if (c === null || v === null) {
-    return cell(T, 'cell-cache', contextWidth(bar), [...head, emptyBar(T, d, 'cache', bar), spaces(T, 1), fig(T, '…', FIG, ROLE.muted, { right: true })])
+    return cell(T, 'cell-cache', contextWidth(g), [...head, emptyBar(T, d, 'cache', g.bar), spaces(T, 1), fig(T, '…', FIG, ROLE.muted, { right: true })])
   }
   const color = toneColor(v.tone)
   const ttlMs = c.ttl === '1h' ? 3600000 : 300000
   const leftMs = c.expiresAt === undefined ? 0 : Math.max(0, c.expiresAt - d.now)
   const pct = v.tone === 'cold' ? 0 : Math.round((leftMs / ttlMs) * 100)
-  return cell(T, 'cell-cache', contextWidth(bar), [
+  return cell(T, 'cell-cache', contextWidth(g), [
     ...head,
     hoverGroup(T, 'cache', cacheCard(c, v), [
-      plainBar(T, d, 'cache', pct, color, bar),
+      plainBar(T, d, 'cache', pct, color, g.bar),
       spaces(T, 1),
       fig(T, v.tone === 'cold' ? '0m' : v.label, FIG, ROLE.text, { bold: true, right: true }),
-      spaces(T, 1),
+      spaces(T, 1 + sparkRoom(g)),
       fig(T, `ttl ${c.ttl}`, AMOUNT, ROLE.sec),
       spaces(T, 1),
       fig(T, CACHE_STATE[v.tone], KEY, v.tone === 'cold' ? ROLE.muted : color, { bold: v.tone !== 'warm' }),
@@ -488,20 +531,28 @@ export function ruleText(width: number, crosses: readonly Cross[]): string {
   return cells.join('')
 }
 
-// The column plan for a band `inner` cells wide: the bar length, whether git
-// shares the rows, and the width git gets.
-export type Plan = { bar: number; isInline: boolean; gitWidth: number }
+// The column plan for a band `inner` cells wide: the bar and spark lengths,
+// whether git shares the rows, and the width git gets.
+export type Plan = Geom & { isInline: boolean; gitWidth: number }
+
+// The geometries to try, best first. The spark goes before the long bar.
+const GEOMS: readonly Geom[] = [
+  { bar: BAR_LONG, spark: SPARK_CELLS },
+  { bar: BAR_SHORT, spark: SPARK_CELLS },
+  { bar: BAR_LONG, spark: 0 },
+  { bar: BAR_SHORT, spark: 0 },
+]
 
 export function planLedger(inner: number): Plan {
   // The row starts after one cell of padding.
   const room = inner - 1
-  const left = (bar: number) => usageWidth(bar) + SEP.length + contextWidth(bar)
-  for (const bar of [BAR_LONG, BAR_SHORT]) {
-    const gitWidth = room - left(bar) - SEP.length
-    if (gitWidth >= GIT_MIN) return { bar, isInline: true, gitWidth }
+  const left = (g: Geom) => usageWidth(g) + SEP.length + contextWidth(g)
+  for (const g of GEOMS) {
+    const gitWidth = room - left(g) - SEP.length
+    if (gitWidth >= GIT_MIN) return { ...g, isInline: true, gitWidth }
   }
-  const bar = left(BAR_LONG) <= room ? BAR_LONG : BAR_SHORT
-  return { bar, isInline: false, gitWidth: room }
+  const g = GEOMS.find(x => left(x) <= room) ?? (GEOMS[GEOMS.length - 1] as Geom)
+  return { ...g, isInline: false, gitWidth: room }
 }
 
 // The ledger rows for a band `inner` cells wide. With room, git shares the
@@ -513,8 +564,8 @@ export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[
   const sep = <Text color={frameColor(d)}>{SEP}</Text>
   const [gitA, gitB] = gitCells(T, d, plan.gitWidth)
   const usageRows = [
-    [windowCell(T, d, '5h', u?.fiveHour, plan.bar), sep, contextCell(T, d, plan.bar)],
-    [windowCell(T, d, '7d', u?.sevenDay, plan.bar), sep, cacheCell(T, d, plan.bar)],
+    [windowCell(T, d, '5h', u?.fiveHour, plan), sep, contextCell(T, d, plan)],
+    [windowCell(T, d, '7d', u?.sevenDay, plan), sep, cacheCell(T, d, plan)],
   ]
   const row = (key: string, children: RenderElement[]) => <Box key={key} paddingLeft={1}>{children}</Box>
   const rules = ledgerRules(inner)
@@ -544,8 +595,8 @@ export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[
 // Each rule starts under the row padding, so its cell 0 is the row's cell 0.
 export function ledgerRules(inner: number): RuleSpec[] {
   const plan = planLedger(inner)
-  const first = usageWidth(plan.bar) + 2
-  const second = first + SEP.length + contextWidth(plan.bar)
+  const first = usageWidth(plan) + 2
+  const second = first + SEP.length + contextWidth(plan)
   const width = inner - 1
   if (plan.isInline) return [{ key: 'rule-1', width, crosses: [{ at: first, glyph: '┼' }, { at: second, glyph: '┼' }] }]
   return [

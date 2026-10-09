@@ -12,6 +12,7 @@ import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
 import type { BarStyle } from './format'
+import type { UsageHistory } from './history'
 import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
 import { loopSampler, mixHex, sampleRamp } from './gradient'
 import { packCells, paintCells } from './raster'
@@ -35,6 +36,9 @@ export type BandData = {
   // The surface the band draws on. Only the terminal paints a Raster.
   surface: string
   barStyle: BarStyle
+  // The 5h and 7d readings over time, and the last context token counts.
+  history: UsageHistory
+  ctxHistory: number[]
   // The rule between ledger rows: animated, and the sweep frame it draws with.
   // On the terminal the sweep clock repaints the rule after that.
   isRuleAnimated: boolean
