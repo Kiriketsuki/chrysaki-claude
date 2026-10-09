@@ -20,7 +20,7 @@ const MAX_TTL_MS = 600000
 // A clock ahead of ours by more than this is not trusted.
 const SKEW_MS = 60000
 // The letters the statusline's own keys use, and the dropdown's.
-export const RESERVED_HOTKEYS = new Set(['a', 'g', 'h', 'l', 'n', 'o', 'p', 'r', 's', 'w', 'x'])
+export const RESERVED_HOTKEYS = new Set(['a', 'e', 'g', 'h', 'l', 'n', 'o', 'p', 'r', 's', 'w', 'x'])
 
 function str(v: unknown, max: number): string | undefined {
   return typeof v === 'string' && v.length > 0 && v.length <= max && !/[\n\r\t]/.test(v) ? v : undefined

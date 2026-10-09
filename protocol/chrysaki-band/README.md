@@ -41,7 +41,7 @@ $XDG_RUNTIME_DIR/chrysaki-band/<source>.json
 | `tone` | `calm`, `info`, `accent`, `warn` or `alert`. Default `calm` |
 | `command` | A slash command without the slash. A press on the segment runs it |
 | `args` | Arguments for the command, up to 200 characters |
-| `hotkey` | One lowercase letter. The statusline keeps `a g h l n o p r s w x`. The first source by name wins a letter |
+| `hotkey` | One lowercase letter. The statusline keeps `a e g h l n o p r s w x`. The first source by name wins a letter |
 | `rank` | Order within the source, lowest first |
 | `hint` | Up to 200 characters. Version 1 of the statusline stores it and draws no card yet |
 
