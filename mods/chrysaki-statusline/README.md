@@ -48,7 +48,7 @@ The mod reads the heartbeat that `codeks inboxd` writes at `$XDG_RUNTIME_DIR/cod
 | `x: ◆ codex 2` | The Codex app-server answers. 2 Codex threads are live. |
 | `x: ◆ codex 2 ▸1` | As above, and 1 thread is working. The ground turns Teal. |
 | `x: ✕ codex` | inboxd runs, but the app-server does not answer. The ground is Error. |
-| `x: ○ codex off` | The codeks mod is loaded, but no heartbeat is younger than 20 seconds. |
+| `x: ○ codex off` | Claude Code loads the codeks mod, but no heartbeat is younger than 20 seconds. |
 
 Without the codeks mod and without a heartbeat, no badge shows. A fault badge never drops. A healthy badge drops with the session clock. Press `ctrl+x tab`, then `x`, or click the badge to open the codeKs panel (`/codex panel`).
 
