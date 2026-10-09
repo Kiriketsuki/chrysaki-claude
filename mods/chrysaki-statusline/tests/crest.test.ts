@@ -31,15 +31,15 @@ test('a wide terminal band draws the mark and the caption beside the header', { 
   await ui.press({ key: 'crest-toggle' })
   expect(await ui.find({ key: 'emblem' })).toBeDefined()
   expect(stored).toContain(true)
-  const mark = EMBLEMS['cube-emerald-plain']
+  const mark = EMBLEMS['hex-emerald']
   expect(await ui.find({ type: 'Text', text: mark?.[0]?.[0]?.[0] ?? '?' })).toBeDefined()
   const caption = await ui.find({ key: 'caption' })
   expect(caption).toBeDefined()
   expect((await ui.findAll({ type: 'Text', text: 'T' })).length).toBeGreaterThan(0)
-  // The fold key closes it again, and the band gives the row back.
+  // The fold key closes it again, and the caption row goes with it.
   await ui.press({ key: 'crest-fold' })
   expect(await ui.find({ key: 'emblem' })).toBeUndefined()
-  expect(await ui.find({ key: 'drawer' })).toBeUndefined()
+  expect(await ui.find({ key: 'caption' })).toBeUndefined()
   expect(stored[stored.length - 1]).toBe(false)
   await ui.unmount()
 })

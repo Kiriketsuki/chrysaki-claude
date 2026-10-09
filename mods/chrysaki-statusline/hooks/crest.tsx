@@ -13,7 +13,7 @@ import type { Table } from './prims'
 
 // The crest needs the row under the header, which a band this wide keeps.
 export const CREST_COLUMNS = 150
-export const DEFAULT_EMBLEM = 'cube-emerald-plain'
+export const DEFAULT_EMBLEM = 'hex-emerald'
 const CAPTION_INK = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean] as const
 
 // The mark's cells for this band, or null when the band draws no crest. The

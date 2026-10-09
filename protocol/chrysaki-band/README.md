@@ -1,8 +1,8 @@
 # Chrysaki band protocol
 
-The chrysaki-statusline mod draws a band above the Claude Code prompt. Other mods and processes add segments to its header through this protocol. A contributor needs no dependency on chrysaki-statusline. Without that mod, nothing reads the file.
+The chrysaki-statusline mod draws a band above the Claude Code prompt. Other mods and processes add segments to it through this protocol. A contributor needs no dependency on chrysaki-statusline. Without that mod, nothing reads the file.
 
-Version 1 carries header segments. The types are in [`band.d.ts`](band.d.ts).
+Version 1 carries segments, drawn in a row under the band header. The types are in [`band.d.ts`](band.d.ts).
 
 ## Write a file
 

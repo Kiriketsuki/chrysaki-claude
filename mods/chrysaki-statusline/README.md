@@ -6,7 +6,7 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 
 - The band is one more ruled section of the prompt box. Its rules and column dividers take the engine's `promptBorder` theme colour, the colour of the prompt's own rules.
 - The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right. The segments step down through dark grounds, Abyss to Raised to Elevated. The type carries the colour: the model name, the folder and the account run a gradient letter by letter. A work account inks in Topaz. On the terminal a faint brand gradient drifts along the header rule. When the segments do not fit, the header drops the version first, then the session clock, the folder and the account. The model, the outage badge and the cost always stay.
-- On a terminal band of 150 columns or more, the crest stands left of the header. It is the Chrysaki mark as a flat-top hexagon of three faces. Powerline slants draw it over the header row and the row under it. That row carries the caption: the `caption` option in gem type, then the repository. The crest starts folded, as the hexagon glyph. Click the brand segment to open it, and press `e: ◂ fold` on the caption row to fold it again. Folded, the band gives the row back. The mod keeps the choice in its plugin store. Under 150 columns, and on the desktop, the header keeps the `⬢` glyph. The `emblem` option picks the mark's colours, or `none`. `tools/emblem.py` builds `hooks/emblem.ts` from the mark's geometry.
+- On a terminal band of 150 columns or more, the crest stands left of the header. It is the Chrysaki mark as a regular flat-top hexagon of three faces, fitted to the cell shape. Diagonal wedge glyphs draw it over the header row and the row under it. That row carries the caption: the `caption` option in gem type, then the repository. The crest starts folded, as the hexagon glyph. Click the brand segment to open it, and press `e: ◂ fold` on the caption row to fold it again. Folded, the band gives the row back. The mod keeps the choice in its plugin store. Under 150 columns, and on the desktop, the header keeps the `⬢` glyph. The `emblem` option picks the mark's colours, or `none`. `tools/emblem.py` builds `hooks/emblem.ts` from the mark's geometry.
 - The row under the header holds the account dropdown while it is open. The ledger under it sets every figure on a grid of three columns: usage, context and git. Usage and context take the width their figures need. Git takes the rest, with the commit age at the right edge. A `│` with two cells of padding on each side parts the columns. The dashed rule crosses each separator as `┼`, or ends under it as `┴`.
 - The bars are 16 cells wide, or 12 when the band is tight. Git shares the two rows from 153 columns. Below that, git takes two rows of its own. Under 100 columns the band folds to one line.
 - Each ledger row opens with a hexagon gem badge. The badge ground runs across a facet, from a dim edge to a light catch. The badges are `5h` in Emerald, `7d` in Teal, `ctx` in Royal Blue, `cache` in Amethyst, and `git` and `diff` in Rhodolite. The badges and the bar tracks are the only fills. A dashed rule parts each ledger row from the next. A gradient of Emerald Lt, Teal Lt and Cerulean runs along it. One cycle takes 6 seconds: 40 steps of 150 ms. The `ruleAnimation` option turns the motion off. Inside the cache warning lead the rule turns Blonde.
@@ -41,11 +41,11 @@ Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.jso
 
 ## Band protocol
 
-Other mods and processes add segments to the header through the band protocol. A contributor writes `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`, and the mod lists that folder every 3 seconds. Each fresh item draws as a header segment in the tone it asks for. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
+Other mods and processes add segments to the band through the band protocol. A contributor writes `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`, and the mod lists that folder every 3 seconds. Each fresh item draws as a segment in the tone it asks for, in the mod row under the header. One empty row follows, before the ledger. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
 
-## codeKs
+## clodeKs
 
-codeKs connects Claude Code and the Codex CLI. It publishes its status through the band protocol, as the `codeks` and `codeks-off` sources, so this mod has no code of its own for it. The segment shows the live Codex threads, and press `c` to open the codeKs panel.
+clodeKs connects Claude Code and the Codex CLI. It publishes its status through the band protocol, as the `clodeks` and `clodeks-off` sources, so this mod has no code of its own for it. The segment shows the live Codex threads, and press `c` to open the clodeKs panel.
 
 ## Share key
 
@@ -127,7 +127,7 @@ The mod also does not draw OSC 8 links.
 
 | Option | Default | Meaning |
 |:---|:---|:---|
-| `emblem` | `cube-emerald-plain` | The crest mark: `cube-emerald-plain`, `cube-tri-plain`, `cube-mono-plain`, the same with a Blonde core, or `none` |
+| `emblem` | `hex-emerald` | The crest mark: `hex-emerald`, `hex-tri`, `hex-mono` or `none` |
 | `caption` | empty | The name beside the crest, before the repository |
 | `barStyle` | `line` | Bar glyphs: `line`, `smooth`, `wave`, `hex`, `diamond`, `circle` or `block` |
 | `animate` | `off` | Scroll the wave bars and pulse the badge every 2 seconds |

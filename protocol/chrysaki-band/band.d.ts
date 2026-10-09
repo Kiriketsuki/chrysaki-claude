@@ -2,7 +2,8 @@
 //
 // A contributor writes one JSON file, `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`.
 // The chrysaki-statusline mod lists that folder every few seconds and draws
-// the items as segments of the band header. See README.md beside this file.
+// the items as segments in a row under the band header. See README.md
+// beside this file.
 
 // How an item reads. The statusline picks the ground and the lettering.
 // It holds the pair to a contrast of at least 4.5 to 1.
