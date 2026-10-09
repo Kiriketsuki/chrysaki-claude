@@ -6,7 +6,8 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 
 - The band is one more ruled section of the prompt box. Its rules and column dividers take the engine's `promptBorder` theme colour, the colour of the prompt's own rules.
 - The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right. The segments step down through dark grounds, Abyss to Raised to Elevated. The type carries the colour: the model name, the folder and the account run a gradient letter by letter. A work account inks in Topaz. On the terminal a faint brand gradient drifts along the header rule. When the segments do not fit, the header drops the version first, then the session clock, the folder and the account. The model, the outage badge and the cost always stay.
-- Below the header, an empty drawer slot holds the account dropdown. The ledger under it sets every figure on a grid of three columns: usage, context and git. Usage and context take the width their figures need. Git takes the rest, with the commit age at the right edge. A `│` with two cells of padding on each side parts the columns. The dashed rule crosses each separator as `┼`, or ends under it as `┴`.
+- On a terminal band of 150 columns or more, the crest stands left of the header. It is the Chrysaki mark as a flat-top hexagon of three faces. Powerline slants draw it over the header row and the row under it. That row carries the caption: the `caption` option in gem type, then the repository. Under 150 columns, and on the desktop, the header keeps the `⬢` glyph. The `emblem` option picks the mark's colours, or `none`. `tools/emblem.py` builds `hooks/emblem.ts` from the mark's geometry.
+- The row under the header holds the account dropdown while it is open. The ledger under it sets every figure on a grid of three columns: usage, context and git. Usage and context take the width their figures need. Git takes the rest, with the commit age at the right edge. A `│` with two cells of padding on each side parts the columns. The dashed rule crosses each separator as `┼`, or ends under it as `┴`.
 - The bars are 16 cells wide, or 12 when the band is tight. Git shares the two rows from 153 columns. Below that, git takes two rows of its own. Under 100 columns the band folds to one line.
 - Each ledger row opens with a hexagon gem badge. The badge ground runs across a facet, from a dim edge to a light catch. The badges are `5h` in Emerald, `7d` in Teal, `ctx` in Royal Blue, `cache` in Amethyst, and `git` and `diff` in Rhodolite. The badges and the bar tracks are the only fills. A dashed rule parts each ledger row from the next. A gradient of Emerald Lt, Teal Lt and Cerulean runs along it. One cycle takes 6 seconds: 40 steps of 150 ms. The `ruleAnimation` option turns the motion off. Inside the cache warning lead the rule turns Blonde.
 - The context colour goes by tokens, not by percent: Teal under 250k, Blonde from 250k, Error from 500k. A 1M window and a 200k window warn at the same size.
@@ -83,11 +84,11 @@ Press `ctrl+x tab`, then `r`, or click the key. The mod puts `/context-resume <p
 
 ## Account switcher
 
-Click the account in the header, or press `ctrl+x tab`, then `a`. A row under the header lists each Claude account with its Firefox user profile. A dot marks the account in use.
+Click the account in the header, or press `ctrl+x tab`, then `a`. A panel under the header lists each Claude account on its own row. Each row has a number key, the Firefox profile and a work or personal chip. A gradient bar runs down the panel's left edge, and a tab names it. The account in use sits on a raised row with a gradient email.
 
-Pick an account to sign in to it. The mod sets `BROWSER` to `bin/open-in-profile` and `CHRYSAKI_LOGIN_PROFILE` to the account's profile folder, then runs `/login`. The login page opens in that Firefox profile, which holds the account's claude.ai session. The mod puts `BROWSER` back when the email in `.claude.json` changes, or after 10 minutes.
+Press an account's number, or click its row, to sign in to it. The mod sets `BROWSER` to `bin/open-in-profile` and `CHRYSAKI_LOGIN_PROFILE` to the account's profile folder, then runs `/login`. The login page opens in that Firefox profile, which holds the account's claude.ai session. The mod puts `BROWSER` back when the email in `.claude.json` changes, or after 10 minutes.
 
-`n: new account` takes an email and a Firefox profile. `bin/firefox-profiles` lists the profiles from the Firefox profile group database. Firefox has no command-line flag that makes a profile, so the last option opens Firefox, where the profile menu makes one. The mod keeps the list in its plugin store under `accounts`.
+`n: new account` takes an email, then shows the Firefox profiles as chips. The chosen chip turns Emerald. `bin/firefox-profiles` lists the profiles from the Firefox profile group database. Firefox has no command-line flag that makes a profile, so the last option opens Firefox, where the profile menu makes one. The mod keeps the list in its plugin store under `accounts`.
 
 Limits:
 
@@ -131,6 +132,8 @@ The mod also does not draw OSC 8 links.
 
 | Option | Default | Meaning |
 |:---|:---|:---|
+| `emblem` | `cube-emerald-plain` | The crest mark: `cube-emerald-plain`, `cube-tri-plain`, `cube-mono-plain`, the same with a Blonde core, or `none` |
+| `caption` | empty | The name beside the crest, before the repository |
 | `barStyle` | `line` | Bar glyphs: `line`, `smooth`, `wave`, `hex`, `diamond`, `circle` or `block` |
 | `animate` | `off` | Scroll the wave bars and pulse the badge every 2 seconds |
 | `usdToSgd` | `1.35` | Multiplier for the cost segment |

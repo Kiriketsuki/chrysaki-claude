@@ -7,6 +7,7 @@ import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFi
 import type { AlertAction, CacheFileHost } from './cache'
 import { mergeIdentity, readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
 import type { Host } from './collect'
+import { DEFAULT_EMBLEM } from './crest'
 import { bandStrips, drawBand } from './draw'
 import type { BandData, LiveStrip } from './draw'
 import { SWEEP_FRAMES, isRuleLive } from './ledger'
@@ -649,6 +650,8 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
 
 export const register: Register = (on, options) => {
   const barStyle = String(options.barStyle ?? 'line') as BarStyle
+  const emblem = String(options.emblem ?? DEFAULT_EMBLEM)
+  const caption = String(options.caption ?? '')
   const isAnimated = String(options.animate ?? 'off') === 'on'
   const isRuleAnimated = String(options.ruleAnimation ?? 'on') === 'on'
   const usdToSgd = Number(options.usdToSgd ?? '1.35') || 1.35
@@ -833,7 +836,7 @@ export const register: Register = (on, options) => {
       codeks: codeksNow,
       onCodeks: () => { void openCodeks($) },
       history: hist, ctxHistory: ctxHist,
-      columns: e.props.bodyColumns, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
+      columns: e.props.bodyColumns, emblem, caption, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
       onGit: () => { void openGitPane($) },

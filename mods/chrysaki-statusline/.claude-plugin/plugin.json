@@ -22,6 +22,27 @@
         "block"
       ]
     },
+    "emblem": {
+      "type": "string",
+      "title": "Crest mark",
+      "description": "The Chrysaki mark beside the header on a wide terminal band. none keeps the ⬢ glyph",
+      "default": "cube-emerald-plain",
+      "options": [
+        "cube-emerald-plain",
+        "cube-tri-plain",
+        "cube-mono-plain",
+        "cube-emerald",
+        "cube-tri",
+        "cube-mono",
+        "none"
+      ]
+    },
+    "caption": {
+      "type": "string",
+      "title": "Crest caption",
+      "description": "The name on the row beside the crest, before the repository. Empty shows the repository alone",
+      "default": ""
+    },
     "animate": {
       "type": "string",
       "title": "Animation",
