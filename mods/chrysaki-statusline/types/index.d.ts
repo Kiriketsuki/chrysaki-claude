@@ -7,6 +7,24 @@ export type StatuslineWindow = {
   resetsAt?: number
 }
 
+// The band protocol: one item another mod or process contributes to the
+// header, checked against protocol/chrysaki-band/band.d.ts.
+export type BandTone = 'calm' | 'info' | 'accent' | 'warn' | 'alert'
+
+export type BandEntry = {
+  // The file's source name, then the item's own id.
+  source: string
+  id: string
+  icon?: string
+  text: string
+  tone: BandTone
+  hint?: string
+  command?: string
+  args?: string
+  hotkey?: string
+  rank: number
+}
+
 // One rate-limit reading: epoch milliseconds, then the percent used.
 export type Sample = readonly [number, number]
 
@@ -95,16 +113,6 @@ export type StatuslineWarn = {
   short: string
   // How many other warnings show.
   more: number
-}
-
-// The codeKs badge, from the heartbeat that `codeks inboxd` writes. `up`: the
-// Codex app-server answers. `down`: inboxd runs but the app-server does not.
-// `off`: the codeks mod is loaded, but no fresh heartbeat exists.
-export type StatuslineCodeks = {
-  state: 'up' | 'down' | 'off'
-  live: number
-  active: number
-  exposed: number
 }
 
 // A new artifact the band offers to open for a share with the partner account.
@@ -217,12 +225,12 @@ declare module 'claude-code' {
       // The lag badge, or null while the machine is calm.
       lag: StatuslineLag | null
       warn: StatuslineWarn | null
-      // The codeKs badge, or null without codeKs.
-      codeks: StatuslineCodeks | null
       // The 5h and 7d readings over time, for the sparks.
       usageHistory: UsageHistory
       // The last context token counts of this session.
       ctxHistory: number[]
+      // The fresh items other mods contribute through the band protocol.
+      band: BandEntry[]
     }
   }
 }

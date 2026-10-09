@@ -7,7 +7,8 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineCodeks } from '../types'
+import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, BandEntry, BandTone } from '../types'
+import { iconFor } from './band'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
 import type { BarStyle } from './format'
@@ -61,9 +62,9 @@ export type BandData = {
   lag: StatuslineLag | null
   warn: StatuslineWarn | null
   onLag: () => void
-  // The codeKs badge, and the press that opens the codeKs panel.
-  codeks: StatuslineCodeks | null
-  onCodeks: () => void
+  // The items other mods contribute through the band protocol, and a press.
+  band: BandEntry[]
+  onBand: (entry: BandEntry) => void
   onOutage: () => void
   onContext: () => void
   cache: StatuslineCache | null
@@ -231,6 +232,27 @@ export const AMBER_GROUND = mixHex(CORE.blonde, CORE.abyss, 0.8)
 // The brand run as a loop, for the drifting header rule.
 const brandAt = loopSampler(BRAND_INK)
 
+// A contributed item as a header segment. The tone picks the ground and the
+// lettering, and the guard in headerPlan holds both to 4.5:1. Warn and alert
+// never drop. The rest drop with the session clock.
+function bandSeg(d: BandData, e: BandEntry): Seg {
+  const label = `${iconFor(e.icon, d.surface)} ${e.text}`
+  const look: Record<BandTone, Pick<Seg, 'bg' | 'fg' | 'bold' | 'ink'>> = {
+    calm: { bg: CORE.raised, fg: ROLE.sec },
+    info: { bg: CORE.raised, fg: ROLE.teal },
+    accent: { bg: CORE.abyss, fg: ROLE.emeraldLt, bold: true, ink: BRAND_INK },
+    warn: { bg: AMBER_GROUND, fg: ROLE.blondeLt, bold: true },
+    alert: { bg: CORE.error, fg: ROLE.text, bold: true },
+  }
+  const isUrgent = e.tone === 'warn' || e.tone === 'alert'
+  return {
+    text: e.hotkey === undefined ? label : `${e.hotkey}: ${label}`,
+    ...look[e.tone],
+    ...(e.command === undefined ? {} : { press: { key: `band-${e.source}-${e.id}`, label, ...(e.hotkey === undefined ? {} : { hotkey: e.hotkey }), onPress: () => d.onBand(e) } }),
+    ...(isUrgent ? {} : { drop: 2 }),
+  }
+}
+
 type HeaderPlan = { left: Seg[]; right: Seg[]; room: number }
 
 // The segments that fit and the room left for the rule. No drawing happens
@@ -298,24 +320,11 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean, hasCrest = f
     bold: true,
     press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
   }]
-  // The codeKs badge from the codeks heartbeat. A fault never drops. A healthy
-  // badge drops with the session clock, before the folder and the account.
-  const cx = d.codeks
-  const cxText = cx === null ? '' : cx.state === 'up'
-    ? `◆ codex ${cx.live}${cx.active > 0 ? ` ▸${cx.active}` : ''}`
-    : cx.state === 'down' ? '✕ codex' : '○ codex off'
-  const codeksSeg: Seg[] = cx === null ? [] : [{
-    text: `x: ${cxText}`,
-    bg: cx.state === 'down' ? CORE.error : cx.state === 'off' ? AMBER_GROUND : cx.active > 0 ? CORE.teal : CORE.elevated,
-    fg: cx.state === 'down' || cx.active > 0 ? ROLE.text : cx.state === 'off' ? ROLE.blondeLt : ROLE.emeraldLt,
-    bold: cx.state !== 'up',
-    press: { key: 'codeks', label: cxText, hotkey: 'x', onPress: d.onCodeks },
-    ...(cx.state === 'up' ? { drop: 2 } : {}),
-  }]
+  const bandSegs = d.band.map(e => bandSeg(d, e))
   const right: Seg[] = [
     ...lagSeg,
     ...warnSeg,
-    ...codeksSeg,
+    ...bandSegs,
     ...outageSeg,
     ...shareSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.elevated, fg: ROLE.blondeLt, bold: true }]),
