@@ -97,6 +97,16 @@ export type StatuslineWarn = {
   more: number
 }
 
+// The codeKs badge, from the heartbeat that `codeks inboxd` writes. `up`: the
+// Codex app-server answers. `down`: inboxd runs but the app-server does not.
+// `off`: the codeks mod is loaded, but no fresh heartbeat exists.
+export type StatuslineCodeks = {
+  state: 'up' | 'down' | 'off'
+  live: number
+  active: number
+  exposed: number
+}
+
 // A new artifact the band offers to open for a share with the partner account.
 export type ShareOffer = {
   url: string
@@ -207,6 +217,8 @@ declare module 'claude-code' {
       // The lag badge, or null while the machine is calm.
       lag: StatuslineLag | null
       warn: StatuslineWarn | null
+      // The codeKs badge, or null without codeKs.
+      codeks: StatuslineCodeks | null
       // The 5h and 7d readings over time, for the sparks.
       usageHistory: UsageHistory
       // The last context token counts of this session.
