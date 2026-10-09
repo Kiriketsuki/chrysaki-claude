@@ -2,8 +2,8 @@
 // context and git. Each column takes the width its figures need. Git takes
 // the rest, so the row ends at the band's edge. A `│` with two cells of
 // padding parts the columns, and the dashed rule between rows crosses it.
-// Each cell opens with a filled jewel badge that ends in a powerline edge:
-// 5h Emerald, 7d Teal, ctx Royal Blue Lt, cache Amethyst Lt, git and diff
+// Each cell opens with a hexagon gem badge whose ground runs across a facet:
+// 5h Emerald, 7d Teal, ctx Royal Blue, cache Amethyst, git and diff
 // Rhodolite. Cell bodies have no ground. No I/O happens here.
 
 import type { RenderElement } from 'claude-code'
@@ -11,7 +11,7 @@ import type { RenderElement } from 'claude-code'
 import type { StatuslineWindow } from '../types'
 import { cacheCard, toneColor } from './cache'
 import type { BandData } from './draw'
-import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, marker, smoothCells, untilReset, usageColor } from './format'
+import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, smoothCells, untilReset, usageColor } from './format'
 import { loopSampler, mixHex } from './gradient'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces, truncate } from './prims'
@@ -19,7 +19,6 @@ import type { Table } from './prims'
 import { hasRaster, packCells, paintCells } from './raster'
 import type { Paint } from './raster'
 
-const EDGE = ''
 // Empty bar cells: dim sockets in the Border colour.
 const SOCKET = CORE.border
 // The column separator: two cells of padding on each side of the bar.
@@ -38,26 +37,60 @@ const KEY = 12
 
 // --- Badges ----------------------------------------------------------------------
 
+// A jewel for a badge: its dim edge and its light catch.
+export type Gem = { dim: string; light: string }
+
+export const GEMS = {
+  emerald: { dim: CORE.emeraldDim, light: CORE.emeraldLight },
+  teal: { dim: CORE.tealDim, light: CORE.tealLight },
+  blue: { dim: CORE.blueDim, light: CORE.blueLight },
+  amethyst: { dim: CORE.amethystDim, light: CORE.amethystLight },
+  rhodolite: { dim: mixHex(CORE.rhodolite, CORE.abyss, 0.4), light: mixHex(CORE.rhodolite, CORE.textPrimary, 0.2) },
+} as const
+
+// The ground at place `t` (0 to 1) across a gem badge. The light catches a
+// little left of centre and falls to the dim edge on both sides, like a cut
+// facet.
+export function facet(g: Gem, t: number): string {
+  return mixHex(g.dim, g.light, Math.max(0, 1 - Math.abs(t - 0.38) * 2.2))
+}
+
+// The caps that make a badge a flat hexagon: ◀ body ▶.
+const CAP_LEFT = '\ue0b2'
+const CAP_RIGHT = '\ue0b0'
+
 type Badge = {
   key: string
   text: string
-  bg: string
+  gem: Gem
+  // The badge's cells, its left cap included. The right cap and one space follow.
   width: number
   press?: { label: string; hotkey?: string; onPress: () => void }
 }
 
-// The badge, its edge in the badge colour on no ground, and one space.
+function center(text: string, width: number): string {
+  const room = Math.max(0, width - text.length)
+  const left = Math.floor(room / 2)
+  return ' '.repeat(left) + text + ' '.repeat(room - left)
+}
+
+// A hexagon gem badge: the left cap, a body whose ground runs across the
+// facet cell by cell, the right cap, and one space. A pressable badge draws
+// its cells as the children of a plain Button.
 function badge(T: Table, b: Badge): RenderElement[] {
   const { Box, Text, Button } = T
+  const inner = b.width - 1
+  const at = (i: number) => facet(b.gem, i / Math.max(1, inner - 1))
+  const cells = (text: string, offset: number) => [...text].map((ch, i) => <Text backgroundColor={at(i + offset)} color={ROLE.text} bold>{ch}</Text>)
+  const mark = b.press?.hotkey === undefined ? 0 : 3
   const body = b.press === undefined
-    ? <Text backgroundColor={b.bg} color={ROLE.text} bold>{` ${b.text}`.padEnd(b.width)}</Text>
+    ? <Text>{cells(center(b.text, inner), 0)}</Text>
     : (
-      <Box key={`badge-${b.key}`} width={b.width} backgroundColor={b.bg}>
-        <Text backgroundColor={b.bg}> </Text>
-        <Button key={b.key} label={b.press.label} hotkey={b.press.hotkey} plain onPress={b.press.onPress} />
+      <Box key={`badge-${b.key}`} width={inner} backgroundColor={at(1)}>
+        <Button key={b.key} hotkey={b.press.hotkey} plain onPress={b.press.onPress}>{cells(center(b.press.label, inner - mark), mark)}</Button>
       </Box>
     )
-  return [body, <Text color={b.bg}>{EDGE}</Text>, <Text> </Text>]
+  return [<Text color={at(0)}>{CAP_LEFT}</Text>, body, <Text color={at(inner - 1)}>{CAP_RIGHT}</Text>, <Text> </Text>]
 }
 
 // --- Bars ------------------------------------------------------------------------
@@ -217,7 +250,7 @@ function scopedText(d: BandData): string {
 
 function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | undefined, bar: number): RenderElement {
   const pct = w?.percent ?? 0
-  const head = badge(T, { key: label, text: `${marker(pct, 50, 75)} ${label}`, bg: label === '5h' ? CORE.emerald : CORE.teal, width: 6 })
+  const head = badge(T, { key: label, text: label, gem: label === '5h' ? GEMS.emerald : GEMS.teal, width: 6 })
   if (w === undefined) {
     return cell(T, `cell-${label}`, usageWidth(bar), [...head, emptyBar(T, d, label, bar), spaces(T, 1 + FIG + 1), resetKey(T, d, label, 'read')])
   }
@@ -253,7 +286,7 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
   const { Text } = T
   const u = d.usage
   const tokens = u?.ctxTokens
-  const head = badge(T, { key: 'ctx-detail', text: '', bg: CORE.blueLight, width: 9, press: { label: `${marker(u?.ctxPercent ?? 0, 50, 75)} ctx`, onPress: d.onContext } })
+  const head = badge(T, { key: 'ctx-detail', text: '', gem: GEMS.blue, width: 9, press: { label: 'ctx', onPress: d.onContext } })
   if (u?.ctxPercent === undefined) {
     const name = d.resumePath === null ? 'no context yet' : d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
     return cell(T, 'cell-ctx', contextWidth(bar), [
@@ -280,7 +313,7 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
 const CACHE_STATE = { warm: '● warm', warning: '◐ cooling', cold: '○ cold' } as const
 
 function cacheCell(T: Table, d: BandData, bar: number): RenderElement {
-  const head = badge(T, { key: 'cache', text: '⧗ cache', bg: CORE.amethystLight, width: 9 })
+  const head = badge(T, { key: 'cache', text: '⧗ cache', gem: GEMS.amethyst, width: 9 })
   const c = d.cache
   const v = d.cacheView
   if (c === null || v === null) {
@@ -319,9 +352,9 @@ function gitCells(T: Table, d: BandData, width: number): [RenderElement, RenderE
   const { Text } = T
   const g = d.git
   const key = d.hasGitCommand
-    ? badge(T, { key: 'git-pane', text: '', bg: CORE.rhodolite, width: 8, press: { label: 'git', hotkey: 'g', onPress: d.onGit } })
-    : badge(T, { key: 'git', text: '⎇ git', bg: CORE.rhodolite, width: 8 })
-  const diff = badge(T, { key: 'diff', text: '± diff', bg: CORE.rhodolite, width: 8 })
+    ? badge(T, { key: 'git-pane', text: '', gem: GEMS.rhodolite, width: 8, press: { label: 'git', hotkey: 'g', onPress: d.onGit } })
+    : badge(T, { key: 'git', text: '⎇ git', gem: GEMS.rhodolite, width: 8 })
+  const diff = badge(T, { key: 'diff', text: '± diff', gem: GEMS.rhodolite, width: 8 })
   const body = width - 10
   if (g === null) {
     return [cell(T, 'git-a', width, [...key, <Text color={ROLE.muted}>no git repository</Text>]), cell(T, 'git-b', width, [...diff])]

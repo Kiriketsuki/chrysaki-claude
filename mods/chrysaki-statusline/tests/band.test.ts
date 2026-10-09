@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
-import { planLedger, ruleText } from '../hooks/ledger'
+import { GEMS, facet, planLedger, ruleText } from '../hooks/ledger'
 import { bandRules } from '../hooks/draw'
 import { unpackCells } from '../hooks/raster'
 import { usageColor } from '../hooks/format'
@@ -146,7 +146,7 @@ test('the default line style draws its bars as rule glyphs', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
   // A line-style bar is one uncoloured Text of rule glyphs. Coloured Texts
   // nested in it hold its filled and empty runs.
-  const bars = (await ui.findAll({ type: 'Text', text: /^[━─]{3,}$/ })).filter(b => b.props.color === undefined)
+  const bars = (await ui.findAll({ type: 'Text', text: /^[━╸─]{3,}$/ })).filter(b => b.props.color === undefined)
   expect(bars.length).toBeGreaterThanOrEqual(3)
   expect(new Set(bars.map(b => b.text.length)).size).toBe(1)
   expect((await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('bar-')).length).toBe(0)
@@ -291,10 +291,16 @@ test('the ledger opens each row with a jewel badge and parts its columns', async
   await $.tool.call({ tool: 'Bash', command: 'git status' })
   for (const columns of [238, 160]) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
-    // Emerald for 5h, Amethyst Lt for the cache, Rhodolite for the diff.
-    expect((await ui.find({ type: 'Text', text: /▰ 5h|▱ 5h|◆ 5h/ }))?.props.backgroundColor).toBe('#14664e')
-    expect((await ui.find({ type: 'Text', text: /⧗ cache/ }))?.props.backgroundColor).toBe('#583090')
-    expect((await ui.find({ type: 'Text', text: /± diff/ }))?.props.backgroundColor).toBe('#9e2d6e')
+    // Each badge is a hexagon gem: Emerald for 5h, Amethyst for the cache,
+    // Rhodolite for the diff. Its cells run across the facet, so the light
+    // catch sits inside the badge and the caps take the dim edge.
+    expect(await ui.find({ type: 'Text', text: /^ +5h +$/ })).toBeDefined()
+    // ' 5h  ' puts the 5 at cell 1 of 5.
+    const grounds = async (text: string) => (await ui.findAll({ type: 'Text', text })).map(t => t.props.backgroundColor)
+    expect(await grounds('5')).toContain(facet(GEMS.emerald, 1 / 4))
+    expect(await grounds('⧗')).toContain(facet(GEMS.amethyst, 0))
+    expect(await grounds('±')).toContain(facet(GEMS.rhodolite, 0))
+    expect((await ui.findAll({ type: 'Text', text: '\ue0b2' })).length).toBeGreaterThanOrEqual(6)
     // A padded bar parts the columns. No dotted or box corner rule shows.
     expect(await ui.find({ type: 'Text', text: '  │  ' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /[┊┐└┘]/ })).toBeUndefined()

@@ -95,6 +95,7 @@ const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
 // band stretches a bar to the width of its cell with `length`. The wave style
 // alternates up and down triangles and scrolls by `shift` (0 to 3).
 export function barCells(pct: number, style: BarStyle, shift: number, length = 8): BarCell[] {
+  if (style === 'line') return lineCells(pct, length)
   const filled = Math.max(0, Math.min(length, Math.floor((pct * length + 50) / 100)))
   return Array.from({ length }, (_, i) => {
     const isFilled = i < filled
@@ -119,6 +120,18 @@ export function smoothCells(pct: number, length: number): SmoothCell[] {
   return Array.from({ length }, (_, i) => {
     const n = Math.max(0, Math.min(8, units - i * 8))
     return { glyph: EIGHTHS[n] ?? ' ', fill: n / 8 }
+  })
+}
+
+// The line bar fills in half cells: a full rule `━`, then a half cap `╸` when
+// the percent ends inside a cell. The bar stays thin and shows twice the steps.
+function lineCells(pct: number, length: number): BarCell[] {
+  const halves = Math.max(0, Math.min(length * 2, Math.round((pct * length * 2) / 100)))
+  return Array.from({ length }, (_, i) => {
+    const n = halves - i * 2
+    if (n >= 2) return { glyph: '━', isFilled: true }
+    if (n === 1) return { glyph: '╸', isFilled: true }
+    return { glyph: '─', isFilled: false }
   })
 }
 

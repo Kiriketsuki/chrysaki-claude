@@ -46,6 +46,9 @@ describe('formats', () => {
     expect(barCells(50, 'hex', 0).filter(c => c.isFilled)).toHaveLength(4)
     expect(barCells(100, 'block', 0).every(c => c.isFilled)).toBe(true)
     expect(barCells(0, 'wave', 1)[0]?.glyph).toBe('▼')
+    // The line bar fills in half cells: 81% of 8 cells is 13 halves.
+    expect(barCells(81, 'line', 0).map(c => c.glyph).join('')).toBe('━━━━━━╸─')
+    expect(barCells(75, 'line', 0).map(c => c.glyph).join('')).toBe('━━━━━━──')
   })
 
   test('cwd, model and remote', async () => {
