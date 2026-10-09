@@ -8,11 +8,12 @@
 import type { RenderElement } from 'claude-code'
 
 import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
-import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
 import type { BarStyle } from './format'
 import type { UsageHistory } from './history'
+import { accountRows } from './dropdown'
+import { CREST_COLUMNS, bandEmblem, captionRow, crestWidth, emblemColumn } from './crest'
 import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
 import { loopSampler, mixHex, readableGround, readableInk, sampleRamp } from './gradient'
 import { packCells, paintCells } from './raster'
@@ -33,6 +34,9 @@ export type BandData = {
   now: number
   home: string
   columns: number
+  // The mark the crest draws (an EMBLEMS name, or none) and the caption name.
+  emblem: string
+  caption: string
   // The surface the band draws on. Only the terminal paints a Raster.
   surface: string
   barStyle: BarStyle
@@ -85,8 +89,9 @@ export type BandData = {
 
 // Below this width the band folds to the header and one line.
 export const NARROW_COLUMNS = 100
-// At this width and up, an empty drawer slot parts the header from the ledger.
-const SPACER_COLUMNS = 150
+// At this width and up, a row parts the header from the ledger. It holds the
+// caption beside the crest, or the account dropdown.
+const SPACER_COLUMNS = CREST_COLUMNS
 // The engine draws its collapse mark `[-]` over the last cells of the band's
 // first row. That row is the blank top margin, so the header runs full width.
 const RESERVE = 0
@@ -140,6 +145,9 @@ function segBody(T: Table, s: Seg): RenderElement {
     )
   }
   const at = s.text.indexOf(' ')
+  if (s.iconFg === undefined && s.ink !== undefined) {
+    return <Text backgroundColor={s.bg}>{[<Text backgroundColor={s.bg}> </Text>, ...inked(T, s.text, s.ink, s.bg, s.bold), <Text backgroundColor={s.bg}> </Text>]}</Text>
+  }
   if (s.iconFg === undefined || at < 0) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
   const icon = <Text backgroundColor={s.bg} color={readableInk(s.iconFg, s.bg)} bold>{` ${s.text.slice(0, at)}`}</Text>
   if (s.ink !== undefined) {
@@ -221,11 +229,14 @@ type HeaderPlan = { left: Seg[]; right: Seg[]; room: number }
 
 // The segments that fit and the room left for the rule. No drawing happens
 // here, so the sweep clock can size the header rule the same way.
-function headerPlan(d: BandData, inner: number, isCompact: boolean): HeaderPlan {
+function headerPlan(d: BandData, inner: number, isCompact: boolean, hasCrest = false): HeaderPlan {
   const id = d.identity
   const u = d.usage
   const left: Seg[] = [
-    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt, ink: BRAND_INK },
+    // Beside the crest the mark stands in for the ⬢ glyph.
+    hasCrest
+      ? { text: modelLabel(id?.model ?? ''), bg: CORE.abyss, fg: ROLE.text, bold: true, ink: BRAND_INK }
+      : { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt, ink: BRAND_INK },
     ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.raised, fg: ROLE.text, iconFg: ROLE.teal, ink: [ROLE.sec, ROLE.text], drop: 1 }] : []),
     ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.elevated, fg: ROLE.text, bold: true, iconFg: ROLE.teal, ink: [ROLE.text, ROLE.blondeLt], drop: 3 }] : []),
   ]
@@ -312,11 +323,11 @@ function headerRule(T: Table, d: BandData, room: number): RenderElement {
   return <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
 }
 
-function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
+function header(T: Table, d: BandData, inner: number, isCompact: boolean, hasCrest = false): RenderElement {
   const { Box, Text, Button } = T
   const id = d.identity
   const u = d.usage
-  const { left: fitLeft, right: fitRight, room } = headerPlan(d, inner, isCompact)
+  const { left: fitLeft, right: fitRight, room } = headerPlan(d, inner, isCompact, hasCrest)
   return (
     <Box key="header">
       <Button key="hint-toggle" label={d.isHintOpen ? '▾' : '▸'} plain onPress={d.onToggleHint} />
@@ -327,56 +338,6 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
         : <Text />}
     </Box>
   )
-}
-
-// --- Account dropdown ------------------------------------------------------------
-
-// The rows under the header while the account dropdown is open. pick lists
-// the accounts, each with its Firefox profile. add takes a new account.
-function accountRows(T: Table, d: BandData): RenderElement[] {
-  const m = d.accountMenu
-  if (m === null) return []
-  const { Box, Text, Button } = T
-  const Select = 'Select' in T ? T.Select : undefined
-  const Input = 'Input' in T ? T.Input : undefined
-  const current = d.identity?.email.toLowerCase() ?? ''
-  const close = <Button key="account-close" label="close" hotkey="x" plain onPress={d.onAccounts} />
-  if (Select === undefined || Input === undefined) {
-    return [<Box key="account-rows" paddingX={1}><Text color={ROLE.muted}>This surface has no picker. Use a terminal or the desktop app.  </Text>{close}</Box>]
-  }
-  if (m.mode === 'pick') {
-    const options = d.accounts.map(a => ({ value: a.email, label: `${a.email === current ? '● ' : '○ '}${accountLabel(a)}` }))
-    const isKnown = d.accounts.some(a => a.email === current)
-    return [
-      <Box key="account-rows" paddingX={1}>
-        <Text color={ROLE.emeraldLt} bold>{'⬢ account  '}</Text>
-        {options.length > 0
-          ? <Select key="account-pick" options={options} value={isKnown ? current : undefined} autoFocus onSelect={value => d.onPickAccount(value)} />
-          : <Text color={ROLE.muted}>no accounts yet</Text>}
-        {spaces(T, 3)}
-        <Button key="account-add" label="new account" hotkey="n" plain onPress={d.onAddAccount} />
-        {spaces(T, 3)}
-        {close}
-        {d.loginEmail === null ? <Text /> : <Text color={ROLE.warn} bold>{`   ◐ signing in as ${d.loginEmail}`}</Text>}
-      </Box>,
-    ]
-  }
-  const profileOptions = [
-    ...d.profiles.map(p => ({ value: p.path, label: p.name })),
-    { value: NEW_PROFILE, label: '+ new Firefox profile' },
-  ]
-  return [
-    <Box key="account-rows" paddingX={1}>
-      <Text color={ROLE.emeraldLt} bold>{'✚ new account  '}</Text>
-      <Input key="account-email" placeholder="email" value={m.draftEmail} autoFocus submitLabel="next" onInput={value => d.onDraftEmail(value)} onSubmit={value => d.onDraftEmail(value)} />
-      {spaces(T, 3)}
-      <Select key="account-profile" label="firefox " options={profileOptions} value={m.draftProfile === '' ? undefined : m.draftProfile} onSelect={value => d.onDraftProfile(value)} />
-      {spaces(T, 3)}
-      <Button key="account-save" label="save" hotkey="s" plain onPress={d.onSaveAccount} />
-      {spaces(T, 3)}
-      <Button key="account-cancel" label="cancel" hotkey="x" plain onPress={d.onCancelAdd} />
-    </Box>,
-  ]
 }
 
 // The folded form under NARROW_COLUMNS: one line of the key figures.
@@ -405,7 +366,8 @@ export type LiveStrip = { key: string; frame: (n: number) => string }
 export function bandStrips(d: BandData): LiveStrip[] {
   const inner = Math.max(20, d.columns - RESERVE)
   const isCompact = d.columns < NARROW_COLUMNS
-  const { room } = headerPlan(d, inner, isCompact)
+  const crest = crestWidth(d)
+  const { room } = headerPlan(d, inner - crest, isCompact, crest > 0)
   const head: LiveStrip = { key: 'header-rule', frame: n => packCells(paintCells(headerRulePaints(room, n))) }
   const rules = isCompact ? [] : ledgerRules(inner).map((r): LiveStrip => ({ key: r.key, frame: n => ruleFrame(r, n) }))
   return [head, ...rules]
@@ -422,6 +384,14 @@ export function drawBand(T: Table, d: BandData): RenderElement {
   // slot under the header holds the account dropdown, or stays empty as a
   // spacer on a wide band.
   const menu = accountRows(T, d)
+  const emblem = bandEmblem(d)
+  if (emblem !== null) {
+    // The crest: the mark beside the header and the row under it. That row
+    // holds the caption, or the account dropdown while it is open.
+    const side = [header(T, d, inner - crestWidth(d), false, true), ...(menu.length > 0 ? menu : [captionRow(T, d)])]
+    const crest = <Box key="crest">{emblemColumn(T, emblem)}<Box flexDirection="column" flexGrow={1}>{side}</Box></Box>
+    return <Box flexDirection="column" marginTop={1}>{[crest, ...ledgerRows(T, d, inner)]}</Box>
+  }
   const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS ? [<Box key="drawer" height={1} />] : []
   return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...slot, ...ledgerRows(T, d, inner)]}</Box>
 }
