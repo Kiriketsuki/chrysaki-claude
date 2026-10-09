@@ -45,6 +45,8 @@ const profiles = atom({ plugin: 'chrysaki-statusline', key: 'profiles' } as cons
 const accountMenu = atom({ plugin: 'chrysaki-statusline', key: 'accountMenu' } as const, null as AccountMenu | null)
 const login = atom({ plugin: 'chrysaki-statusline', key: 'login' } as const, null as PendingLogin | null)
 const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as const, false)
+// The crest starts folded. A wide band spends two rows on it while open.
+const crestOpen = atom({ plugin: 'chrysaki-statusline', key: 'crestOpen' } as const, false)
 const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
 const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, null as StatuslineOutage | null)
 const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
@@ -60,6 +62,8 @@ const SWEEP_MS = 150
 
 // The $.store key that keeps the drawer open or closed across sessions.
 const HINT_OPEN_KEY = 'hintOpen'
+// The $.store key that keeps the crest open or folded across sessions.
+const CREST_OPEN_KEY = 'crestOpen'
 
 // A login the switcher started gives BROWSER back after this long, even when
 // the account never changed.
@@ -550,6 +554,17 @@ async function toggleHint($: EngineInterface): Promise<void> {
   await $.store.set(HINT_OPEN_KEY, next).catch(error => logFailure($, error))
 }
 
+async function loadCrestOpen($: EngineInterface): Promise<void> {
+  const v = await $.store.get(CREST_OPEN_KEY).catch(() => undefined)
+  await update($, crestOpen, () => v === true)
+}
+
+async function toggleCrest($: EngineInterface): Promise<void> {
+  const next = !(await read($, crestOpen))
+  await update($, crestOpen, () => next)
+  await $.store.set(CREST_OPEN_KEY, next).catch(error => logFailure($, error))
+}
+
 // The outage badge opens the incident page in the browser.
 async function openOutage($: EngineInterface, o: StatuslineOutage | null): Promise<void> {
   if (o === null) return
@@ -613,6 +628,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   for (const t of old) t.cancel()
   $.clock.after(0, () => { void loadAccounts($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
+  $.clock.after(0, () => { void loadCrestOpen($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => {
     void refreshFast($)
       .then(() => loadHistory($))
@@ -812,6 +828,7 @@ export const register: Register = (on, options) => {
     const [accountList, profileList, menu, pendingLogin, isHintOpen] = await Promise.all([
       read($, accounts), read($, profiles), read($, accountMenu), read($, login), read($, hintOpen),
     ])
+    const isCrestOpen = await read($, crestOpen)
     // The first draw of a session after a /clear finds empty state. It starts
     // the reads itself, at most once in 10 seconds, and draws the last known
     // identity meanwhile.
@@ -857,6 +874,8 @@ export const register: Register = (on, options) => {
       onSaveAccount: () => { void saveDraft($) },
       isHintOpen,
       onToggleHint: () => { void toggleHint($) },
+      isCrestOpen,
+      onToggleCrest: () => { void toggleCrest($) },
     }
     liveRules = isRuleLive(table, data) ? { requestId: e.requestId, strips: bandStrips(data) } : null
     const band = drawBand(table, data)

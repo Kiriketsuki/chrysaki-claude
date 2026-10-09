@@ -13,7 +13,7 @@ import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessi
 import type { BarStyle } from './format'
 import type { UsageHistory } from './history'
 import { accountRows } from './dropdown'
-import { CREST_COLUMNS, bandEmblem, captionRow, crestWidth, emblemColumn } from './crest'
+import { CREST_COLUMNS, bandEmblem, captionRow, crestFolded, crestWidth, emblemColumn } from './crest'
 import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
 import { loopSampler, mixHex, readableGround, readableInk, sampleRamp } from './gradient'
 import { packCells, paintCells } from './raster'
@@ -37,6 +37,9 @@ export type BandData = {
   // The mark the crest draws (an EMBLEMS name, or none) and the caption name.
   emblem: string
   caption: string
+  // The crest folds to the hexagon glyph. A press on the glyph opens it.
+  isCrestOpen: boolean
+  onToggleCrest: () => void
   // The surface the band draws on. Only the terminal paints a Raster.
   surface: string
   barStyle: BarStyle
@@ -118,7 +121,7 @@ type Seg = {
   iconFg?: string
   // Gradient stops for the words after the icon, drawn letter by letter.
   ink?: readonly string[]
-  press?: { key: string; label: string; hotkey: string; onPress: () => void }
+  press?: { key: string; label: string; hotkey?: string; onPress: () => void }
   drop?: number
 }
 
@@ -239,7 +242,10 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean, hasCrest = f
     // Beside the crest the mark stands in for the ⬢ glyph.
     hasCrest
       ? { text: modelLabel(id?.model ?? ''), bg: CORE.abyss, fg: ROLE.text, bold: true, ink: BRAND_INK }
-      : { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt, ink: BRAND_INK },
+      : crestFolded(d)
+        // A folded crest: a press on the brand segment opens it.
+        ? { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, ink: BRAND_INK, press: { key: 'crest-toggle', label: `⬢ ${modelLabel(id?.model ?? '')}`, onPress: d.onToggleCrest } }
+        : { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt, ink: BRAND_INK },
     ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.raised, fg: ROLE.text, iconFg: ROLE.teal, ink: [ROLE.sec, ROLE.text], drop: 1 }] : []),
     ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.elevated, fg: ROLE.text, bold: true, iconFg: ROLE.teal, ink: [ROLE.text, ROLE.blondeLt], drop: 3 }] : []),
   ]
@@ -410,6 +416,7 @@ export function drawBand(T: Table, d: BandData): RenderElement {
     const crest = <Box key="crest">{emblemColumn(T, emblem)}<Box flexDirection="column" flexGrow={1}>{side}</Box></Box>
     return <Box flexDirection="column" marginTop={1}>{[crest, ...ledgerRows(T, d, inner)]}</Box>
   }
-  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS ? [<Box key="drawer" height={1} />] : []
+  // A folded crest gives its row back, so the band stays compact.
+  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS && !crestFolded(d) ? [<Box key="drawer" height={1} />] : []
   return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...slot, ...ledgerRows(T, d, inner)]}</Box>
 }
