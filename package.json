@@ -1,6 +1,6 @@
 {
   "name": "@kiriketsuki/chrysaki-claude",
-  "version": "26.3.2.0",
+  "version": "26.3.3.0",
   "description": "Chrysaki theme integration for Claude Code: four-line status bar, stats fetcher, cost export",
   "license": "MIT",
   "repository": "github:Kiriketsuki/chrysaki-claude",
