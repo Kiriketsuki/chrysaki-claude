@@ -12,7 +12,8 @@ import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
 import type { BarStyle } from './format'
-import { ledgerRows } from './ledger'
+import { ledgerRows, ledgerRules } from './ledger'
+import type { RuleSpec } from './ledger'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces } from './prims'
 import type { Table } from './prims'
@@ -29,8 +30,11 @@ export type BandData = {
   now: number
   home: string
   columns: number
+  // The surface the band draws on. Only the terminal paints a Raster.
+  surface: string
   barStyle: BarStyle
-  // The rule between ledger rows: animated, and its current frame.
+  // The rule between ledger rows: animated, and the sweep frame it draws with.
+  // On the terminal the sweep clock repaints the rule after that.
   isRuleAnimated: boolean
   sweep: number
   usdToSgd: number
@@ -330,6 +334,11 @@ function compactLine(T: Table, d: BandData): RenderElement | null {
   if (d.cacheView) add(<Text color={toneColor(d.cacheView.tone)}>{`${HOURGLASS} ${d.cacheView.label}`}</Text>)
   if (g) add(<Text color={ROLE.emeraldLt}>{`⎇ ${g.branch} +${g.insertions} -${g.deletions}`}</Text>)
   return bits.length === 0 ? null : <Box>{bits}</Box>
+}
+
+// The ledger rules a band `columns` wide draws. A folded band has none.
+export function bandRules(columns: number): RuleSpec[] {
+  return columns < NARROW_COLUMNS ? [] : ledgerRules(Math.max(20, columns - RESERVE))
 }
 
 export function drawBand(T: Table, d: BandData): RenderElement {

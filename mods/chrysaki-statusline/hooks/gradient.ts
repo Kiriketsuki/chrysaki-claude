@@ -38,14 +38,28 @@ export function oklabToHex([L, a, b]: Lab): string {
   return '#' + rgb.map(v => fromLinear(v).toString(16).padStart(2, '0')).join('')
 }
 
+function mixLab(from: Lab, to: Lab, f: number): Lab {
+  return [0, 1, 2].map(k => (from[k] as number) + ((to[k] as number) - (from[k] as number)) * f) as Lab
+}
+
+// The colour `f` of the way from `a` to `b`, mixed in OKLab.
+export function mixHex(a: string, b: string, f: number): string {
+  return oklabToHex(mixLab(hexToOklab(a), hexToOklab(b), Math.max(0, Math.min(1, f))))
+}
+
+// A sampler for a loop through `stops`. It converts the stops once, so a
+// raster frame of hundreds of cells costs one conversion per cell.
+export function loopSampler(stops: readonly string[]): (t: number) => string {
+  if (stops.length === 0) return () => '#000000'
+  const labs = stops.map(hexToOklab)
+  return t => {
+    const x = (((t % 1) + 1) % 1) * labs.length
+    const i = Math.floor(x)
+    return oklabToHex(mixLab(labs[i % labs.length] as Lab, labs[(i + 1) % labs.length] as Lab, x - i))
+  }
+}
+
 // The colour at `t` along a loop through `stops`: 0 and 1 are the first stop.
 export function sampleLoop(stops: readonly string[], t: number): string {
-  if (stops.length === 0) return '#000000'
-  const labs = stops.map(hexToOklab)
-  const x = (((t % 1) + 1) % 1) * labs.length
-  const i = Math.floor(x)
-  const from = labs[i % labs.length] as Lab
-  const to = labs[(i + 1) % labs.length] as Lab
-  const f = x - i
-  return oklabToHex([0, 1, 2].map(k => (from[k] as number) + ((to[k] as number) - (from[k] as number)) * f) as Lab)
+  return loopSampler(stops)(t)
 }

@@ -10,9 +10,10 @@
     "barStyle": {
       "type": "string",
       "title": "Bar style",
-      "description": "Progress bar glyphs. line draws filled and empty rules in the prompt colour",
-      "default": "line",
+      "description": "Progress bar glyphs. smooth fills each cell in eighths on a recessed track. line draws filled and empty rules",
+      "default": "smooth",
       "options": [
+        "smooth",
         "line",
         "wave",
         "hex",
@@ -34,7 +35,7 @@
     "ruleAnimation": {
       "type": "string",
       "title": "Animated row rule",
-      "description": "Run a gradient along the dashed rule between ledger rows. It redraws the band every 150 ms",
+      "description": "Run a gradient along the dashed rule between ledger rows. The terminal repaints the rule cells every 150 ms without a redraw of the band",
       "default": "on",
       "options": [
         "on",

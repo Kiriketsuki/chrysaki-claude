@@ -3,7 +3,7 @@
 
 import { ROLE } from './palette'
 
-export type BarStyle = 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
+export type BarStyle = 'smooth' | 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
 
 // 5h usage: Emerald Lt, Blonde from 50, Ruby from 75.
 export function fiveHourColor(pct: number): string {
@@ -66,6 +66,8 @@ export function untilReset(resetsAt: number | undefined, now: number): string {
 export type BarCell = { glyph: string; isFilled: boolean }
 
 const GLYPHS: Record<Exclude<BarStyle, 'wave'>, [string, string]> = {
+  // smooth draws through smoothCells. These glyphs serve barCells alone.
+  smooth: ['█', ' '],
   line: ['━', '─'],
   hex: ['⬢', '⬡'],
   diamond: ['◆', '◇'],
@@ -86,6 +88,21 @@ export function barCells(pct: number, style: BarStyle, shift: number, length = 8
     }
     const [full, empty] = GLYPHS[style]
     return { glyph: isFilled ? full : empty, isFilled }
+  })
+}
+
+// The eighth blocks, from empty to full. Index n fills n eighths of a cell.
+const EIGHTHS = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'] as const
+
+export type SmoothCell = { glyph: string; fill: number }
+
+// The smooth bar: each cell fills in eighths, so a bar of `length` cells
+// shows `length * 8` steps. `fill` is the part of the cell filled, 0 to 1.
+export function smoothCells(pct: number, length: number): SmoothCell[] {
+  const units = Math.max(0, Math.min(length * 8, Math.round((pct * length * 8) / 100)))
+  return Array.from({ length }, (_, i) => {
+    const n = Math.max(0, Math.min(8, units - i * 8))
+    return { glyph: EIGHTHS[n] ?? ' ', fill: n / 8 }
   })
 }
 

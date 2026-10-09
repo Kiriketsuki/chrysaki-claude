@@ -11,11 +11,13 @@ import type { RenderElement } from 'claude-code'
 import type { StatuslineWindow } from '../types'
 import { cacheCard, toneColor } from './cache'
 import type { BandData } from './draw'
-import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, marker, untilReset } from './format'
-import { sampleLoop } from './gradient'
+import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, marker, smoothCells, untilReset } from './format'
+import { loopSampler, mixHex } from './gradient'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces, truncate } from './prims'
 import type { Table } from './prims'
+import { hasRaster, packCells, paintCells } from './raster'
+import type { Paint } from './raster'
 
 const EDGE = ''
 // Empty bar cells: dim sockets in the Border colour.
@@ -86,10 +88,62 @@ function zoneAt(zones: readonly Zone[], position: number): string {
 
 type Bar = { el: RenderElement; reached: string }
 
+// A smooth bar mixes each zone colour into the next across this many cells
+// around the zone boundary, in OKLab, so the bar never passes through grey.
+const BLEND_CELLS = 1.5
+
+// The colour at `position` percent of a bar `length` cells long.
+export function blendZones(zones: readonly Zone[], position: number, length: number): string {
+  const half = (BLEND_CELLS * 100) / Math.max(1, length) / 2
+  for (let k = 0; k < zones.length - 1; k++) {
+    const zone = zones[k] as Zone
+    const next = zones[k + 1] as Zone
+    if (Math.abs(position - zone.until) < half) return mixHex(zone.color, next.color, (position - zone.until + half) / (2 * half))
+  }
+  return zoneAt(zones, position)
+}
+
+// The cells of a smooth bar. The track is a Border ground under every cell,
+// so the empty part of a partial cell shows as track. A filled part takes the
+// colour at its own middle.
+export function smoothPaints(pct: number, zones: readonly Zone[], length: number): Paint[] {
+  return smoothCells(pct, length).map((c, i) => ({
+    glyph: c.glyph,
+    fg: c.fill === 0 ? null : blendZones(zones, ((i + c.fill / 2) / length) * 100, length),
+    bg: SOCKET,
+  }))
+}
+
+// One row of cells: a Raster on the terminal, runs of Text elsewhere.
+export function paintRow(T: Table, surface: string, key: string, paints: readonly Paint[]): RenderElement {
+  if (hasRaster(T, surface)) {
+    const { Raster } = T
+    return <Raster key={key} columns={paints.length} rows={1} cells={packCells(paintCells(paints))} />
+  }
+  const { Text } = T
+  const runs: { fg: string | null; bg: string | null; text: string }[] = []
+  for (const p of paints) {
+    const last = runs[runs.length - 1]
+    if (last !== undefined && last.fg === p.fg && last.bg === p.bg) last.text += p.glyph
+    else runs.push({ fg: p.fg, bg: p.bg, text: p.glyph })
+  }
+  return (
+    <Text key={key}>
+      {runs.map(r => <Text {...(r.fg === null ? {} : { color: r.fg })} {...(r.bg === null ? {} : { backgroundColor: r.bg })}>{r.text}</Text>)}
+    </Text>
+  )
+}
+
 // A bar coloured by the zone each cell sits in. `reached` is the colour of the
 // last filled cell, or the text colour while the bar stays in its first zone.
-function zoneBar(T: Table, d: BandData, pct: number, zones: readonly Zone[], length: number): Bar {
+function zoneBar(T: Table, d: BandData, key: string, pct: number, zones: readonly Zone[], length: number): Bar {
   const { Text } = T
+  if (d.barStyle === 'smooth') {
+    const paints = smoothPaints(pct, zones, length)
+    const top = zoneAt(zones, pct)
+    const isEmpty = paints.every(p => p.fg === null)
+    return { el: paintRow(T, d.surface, `bar-${key}`, paints), reached: isEmpty || top === zones[0]?.color ? ROLE.text : top }
+  }
   const cells = barCells(pct, d.barStyle, d.phase % 4, length)
   const colors = cells.map((c, i) => (c.isFilled ? zoneAt(zones, ((i + 1) / length) * 100) : SOCKET))
   const runs: { color: string; text: string }[] = []
@@ -106,12 +160,14 @@ function zoneBar(T: Table, d: BandData, pct: number, zones: readonly Zone[], len
 }
 
 // A bar in one colour, for the cache that drains as it cools.
-function plainBar(T: Table, d: BandData, pct: number, color: string, length: number): RenderElement {
-  return zoneBar(T, d, pct, [{ until: Infinity, color }], length).el
+function plainBar(T: Table, d: BandData, key: string, pct: number, color: string, length: number): RenderElement {
+  return zoneBar(T, d, key, pct, [{ until: Infinity, color }], length).el
 }
 
-function emptyBar(T: Table, length: number): RenderElement {
+// A bar with no figure yet: the bare track.
+function emptyBar(T: Table, d: BandData, key: string, length: number): RenderElement {
   const { Text } = T
+  if (d.barStyle === 'smooth') return paintRow(T, d.surface, `bar-${key}`, smoothPaints(0, [], length))
   return <Text color={SOCKET}>{'─'.repeat(length)}</Text>
 }
 
@@ -161,9 +217,9 @@ function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | 
   const pct = w?.percent ?? 0
   const head = badge(T, { key: label, text: `${marker(pct, 50, 75)} ${label}`, bg: label === '5h' ? CORE.emerald : CORE.teal, width: 6 })
   if (w === undefined) {
-    return cell(T, `cell-${label}`, usageWidth(bar), [...head, emptyBar(T, bar), spaces(T, 1 + FIG + 1), resetKey(T, d, label, 'read')])
+    return cell(T, `cell-${label}`, usageWidth(bar), [...head, emptyBar(T, d, label, bar), spaces(T, 1 + FIG + 1), resetKey(T, d, label, 'read')])
   }
-  const b = zoneBar(T, d, pct, USAGE_ZONES, bar)
+  const b = zoneBar(T, d, label, pct, USAGE_ZONES, bar)
   const reset = untilReset(w.resetsAt, d.now)
   const when = w.resetsAt === undefined ? 'reset time unknown' : `resets ${new Date(w.resetsAt).toISOString().slice(11, 16)} UTC, in ${reset}`
   const extra = label === '7d' ? scopedText(d) : ''
@@ -199,10 +255,10 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
   if (u?.ctxPercent === undefined) {
     const name = d.resumePath === null ? 'no context yet' : d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
     return cell(T, 'cell-ctx', contextWidth(bar), [
-      ...head, emptyBar(T, bar), spaces(T, 1 + FIG + 1), fig(T, name, AMOUNT, ROLE.muted), spaces(T, 1), contextKey(T, d, undefined),
+      ...head, emptyBar(T, d, 'ctx', bar), spaces(T, 1 + FIG + 1), fig(T, name, AMOUNT, ROLE.muted), spaces(T, 1), contextKey(T, d, undefined),
     ])
   }
-  const b = zoneBar(T, d, u.ctxPercent, contextZones(u.ctxWindow), bar)
+  const b = zoneBar(T, d, 'ctx', u.ctxPercent, contextZones(u.ctxWindow), bar)
   const used = tokens === undefined ? '' : kilo(tokens)
   const of = `/${kilo(u.ctxWindow)}`
   return cell(T, 'cell-ctx', contextWidth(bar), [
@@ -226,7 +282,7 @@ function cacheCell(T: Table, d: BandData, bar: number): RenderElement {
   const c = d.cache
   const v = d.cacheView
   if (c === null || v === null) {
-    return cell(T, 'cell-cache', contextWidth(bar), [...head, emptyBar(T, bar), spaces(T, 1), fig(T, '…', FIG, ROLE.muted, { right: true })])
+    return cell(T, 'cell-cache', contextWidth(bar), [...head, emptyBar(T, d, 'cache', bar), spaces(T, 1), fig(T, '…', FIG, ROLE.muted, { right: true })])
   }
   const color = toneColor(v.tone)
   const ttlMs = c.ttl === '1h' ? 3600000 : 300000
@@ -235,7 +291,7 @@ function cacheCell(T: Table, d: BandData, bar: number): RenderElement {
   return cell(T, 'cell-cache', contextWidth(bar), [
     ...head,
     hoverGroup(T, 'cache', cacheCard(c, v), [
-      plainBar(T, d, pct, color, bar),
+      plainBar(T, d, 'cache', pct, color, bar),
       spaces(T, 1),
       fig(T, v.tone === 'cold' ? '0m' : v.label, FIG, ROLE.text, { bold: true, right: true }),
       spaces(T, 1),
@@ -319,33 +375,62 @@ function gitCells(T: Table, d: BandData, width: number): [RenderElement, RenderE
 
 // --- Layout ----------------------------------------------------------------------
 
+// The animated rule: a gradient loop that travels one full cycle across the
+// band in SWEEP_FRAMES steps. Only safe line accents take part: Royal Blue and
+// Amethyst are fills alone.
+export const SWEEP_FRAMES = 40
+const SWEEP_STOPS = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean, ROLE.teal] as const
+const sweepAt = loopSampler(SWEEP_STOPS)
+
 // The dashed rule between two ledger rows. A separator above and below it
 // crosses it as `┼`. One above alone ends on it as `┴`. Animated, each dash
-// takes its place on the gradient loop, shifted by the sweep frame. Inside the
-// cache warning lead, or with the animation off, the rule takes the frame
-// colour.
-function dashRule(T: Table, d: BandData, width: number, crosses: readonly Cross[]): RenderElement {
+// takes its place on the gradient loop, shifted by the sweep frame. On the
+// terminal the rule is a Raster, and the sweep clock repaints its cells with
+// `$.ui.blit`, so the band does not draw again. Elsewhere the rule keeps the
+// frame of its last draw. Inside the cache warning lead, or with the
+// animation off, the rule takes the frame colour.
+function dashRule(T: Table, d: BandData, spec: RuleSpec): RenderElement {
   const { Text } = T
   const base = frameColor(d)
-  const text = ruleText(width, crosses)
+  const text = ruleText(spec.width, spec.crosses)
   if (!d.isRuleAnimated || base !== 'promptBorder') return <Text color={base}>{text}</Text>
+  if (hasRaster(T, d.surface)) return paintRow(T, d.surface, spec.key, rulePaints(spec, d.sweep))
   const unit = DASH + GAP_CELLS
   const parts: RenderElement[] = []
-  for (let x = 0; x < width; x += unit) {
-    parts.push(<Text color={sampleLoop(SWEEP_STOPS, x / Math.max(1, width) + d.sweep / SWEEP_FRAMES)}>{text.slice(x, x + unit)}</Text>)
+  for (let x = 0; x < spec.width; x += unit) {
+    parts.push(<Text color={sweepAt(x / Math.max(1, spec.width) + d.sweep / SWEEP_FRAMES)}>{text.slice(x, x + unit)}</Text>)
   }
   return <Text>{parts}</Text>
+}
+
+// True when the band draws its rules as Rasters the sweep clock repaints.
+export function isRuleLive(T: Table, d: BandData): boolean {
+  return d.isRuleAnimated && frameColor(d) === 'promptBorder' && hasRaster(T, d.surface)
+}
+
+// One animated rule: its Raster key, its width and its crossings.
+export type RuleSpec = { key: string; width: number; crosses: Cross[] }
+
+// The cells of a rule at sweep frame `frame`. Each dash cell takes its own
+// place on the gradient loop. Gaps take the terminal's colour.
+export function rulePaints(spec: RuleSpec, frame: number): Paint[] {
+  const width = Math.max(1, spec.width)
+  return [...ruleText(spec.width, spec.crosses)].map((glyph, x) => ({
+    glyph,
+    fg: glyph === ' ' ? null : sweepAt(x / width + frame / SWEEP_FRAMES),
+    bg: null,
+  }))
+}
+
+// The packed cells a blit sends for a rule at sweep frame `frame`.
+export function ruleFrame(spec: RuleSpec, frame: number): string {
+  return packCells(paintCells(rulePaints(spec, frame)))
 }
 
 // A dash run of DASH cells, then GAP_CELLS blank cells, cut to `width`.
 const DASH = 2
 const GAP_CELLS = 1
 
-// The animated rule: a gradient loop that travels one full cycle across the
-// band in SWEEP_FRAMES steps. Only safe line accents take part: Royal Blue and
-// Amethyst are fills alone.
-export const SWEEP_FRAMES = 40
-const SWEEP_STOPS = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean, ROLE.teal] as const
 
 export function dashes(width: number): string {
   const unit = '─'.repeat(DASH) + ' '.repeat(GAP_CELLS)
@@ -397,25 +482,40 @@ export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[
     [windowCell(T, d, '7d', u?.sevenDay, plan.bar), sep, cacheCell(T, d, plan.bar)],
   ]
   const row = (key: string, children: RenderElement[]) => <Box key={key} paddingLeft={1}>{children}</Box>
-  // The rule starts under the row padding, so its cell 0 is the row's cell 0.
-  const first = usageWidth(plan.bar) + 2
-  const second = first + SEP.length + contextWidth(plan.bar)
-  const width = inner - 1
-  const rule = (i: number, crosses: Cross[]) => <Box key={`row-rule-${i}`} paddingLeft={1}>{dashRule(T, d, width, crosses)}</Box>
+  const rules = ledgerRules(inner)
+  const rule = (i: number) => {
+    const spec = rules[i - 1] as RuleSpec
+    return <Box key={`row-rule-${i}`} paddingLeft={1}>{dashRule(T, d, spec)}</Box>
+  }
   if (plan.isInline) {
     return [
       row('row-0', [...(usageRows[0] ?? []), sep, gitA]),
-      rule(1, [{ at: first, glyph: '┼' }, { at: second, glyph: '┼' }]),
+      rule(1),
       row('row-1', [...(usageRows[1] ?? []), sep, gitB]),
     ]
   }
   return [
     row('row-0', usageRows[0] ?? []),
-    rule(1, [{ at: first, glyph: '┼' }]),
+    rule(1),
     row('row-1', usageRows[1] ?? []),
-    rule(2, [{ at: first, glyph: '┴' }]),
+    rule(2),
     row('row-2', [gitA]),
-    rule(3, []),
+    rule(3),
     row('row-3', [gitB]),
+  ]
+}
+
+// The rules between ledger rows for a band `inner` cells wide, top to bottom.
+// Each rule starts under the row padding, so its cell 0 is the row's cell 0.
+export function ledgerRules(inner: number): RuleSpec[] {
+  const plan = planLedger(inner)
+  const first = usageWidth(plan.bar) + 2
+  const second = first + SEP.length + contextWidth(plan.bar)
+  const width = inner - 1
+  if (plan.isInline) return [{ key: 'rule-1', width, crosses: [{ at: first, glyph: '┼' }, { at: second, glyph: '┼' }] }]
+  return [
+    { key: 'rule-1', width, crosses: [{ at: first, glyph: '┼' }] },
+    { key: 'rule-2', width, crosses: [{ at: first, glyph: '┴' }] },
+    { key: 'rule-3', width, crosses: [] },
   ]
 }

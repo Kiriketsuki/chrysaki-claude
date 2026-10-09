@@ -8,13 +8,20 @@ This mod draws the Chrysaki four-line statusline in the band above the prompt. I
 - The header rule carries the model, version and folder as zigzag-alt segments, and the cost, session clock and account on the right. When the segments do not fit, the header drops the version first, then the session clock, the folder and the account. The model, the outage badge and the cost always stay.
 - Below the header, an empty drawer slot holds the account dropdown. The ledger under it sets every figure on a grid of three columns: usage, context and git. Usage and context take the width their figures need. Git takes the rest, with the commit age at the right edge. A `│` with two cells of padding on each side parts the columns. The dashed rule crosses each separator as `┼`, or ends under it as `┴`.
 - The bars are 16 cells wide, or 12 when the band is tight. Git shares the two rows from 153 columns. Below that, git takes two rows of its own. Under 100 columns the band folds to one line.
-- Each ledger row opens with a filled jewel badge and a powerline edge: `5h` on Emerald, `7d` on Teal, `ctx` on Royal Blue Lt, `cache` on Amethyst Lt, `git` and `diff` on Rhodolite. The badges are the only fills. A dashed rule parts each ledger row from the next. A gradient of Emerald Lt, Teal Lt and Cerulean runs along it, one 6-second cycle every 40 steps of 150 ms. The `ruleAnimation` option turns the motion off. Inside the cache warning lead the rule turns Blonde.
+- Each ledger row opens with a filled jewel badge and a powerline edge. The badges are `5h` on Emerald, `7d` on Teal, `ctx` on Royal Blue Lt, `cache` on Amethyst Lt, and `git` and `diff` on Rhodolite. The badges and the bar tracks are the only fills. A dashed rule parts each ledger row from the next. A gradient of Emerald Lt, Teal Lt and Cerulean runs along it. One cycle takes 6 seconds: 40 steps of 150 ms. The `ruleAnimation` option turns the motion off. Inside the cache warning lead the rule turns Blonde.
 - The context colour goes by tokens, not by percent: Teal under 250k, Blonde from 250k, Error from 500k. A 1M window and a 200k window warn at the same size.
-- Bars default to the static `line` style. Each usage bar cell takes the colour of its zone: Emerald Lt to 50%, Teal Lt to 75%, Blonde Lt to 90%, then Error Lt. The context zones sit at 250k and 500k tokens. Empty cells are dim sockets in the Border colour, and each percent takes the colour of the zone it reached.
+- Bars default to the `smooth` style. Each cell fills in eighths (`▏▎▍▌▋▊▉█`), so a 16-cell bar shows 128 steps. The bar sits on a track in the Border colour, and the empty part of a partial cell shows as track. The usage zones are Emerald Lt to 50%, Teal Lt to 75%, Blonde Lt to 90%, then Error Lt. The context zones sit at 250k and 500k tokens. Across one and a half cells at each zone boundary, the colour mixes in OKLab into the next zone. Each percent takes the colour of the zone it reached.
+- The other bar styles draw one glyph a cell. Each cell takes the colour of its zone, and empty cells are dim sockets in the Border colour.
 - Each segment shows a card with details on hover. The `ctx` control opens the context tab of `/insight` when Claude Code loads the `chrysaki-insight` mod. Without it, the control shows the context breakdown as a toast.
 - The band yields to surveys and stacks with the band of any other mod.
 
 The engine sends rate limits, context and cost to the mod, and the mod reads live usage itself. Git, GitHub and vault data come from `git`, `gh` and the file system. The mod caches GitHub data for 5 minutes.
+
+## Terminal rasters
+
+On the terminal, the band draws each smooth bar and each animated rule as a `Raster`. A Raster is a fixed grid of cells, and each cell has its own glyph, foreground and background. The sweep clock repaints the rule cells with `$.ui.blit` every 150 ms. The band does not draw again for a sweep step. A step costs no state reads and no tree build.
+
+Other surfaces draw the same cells as runs of `Text`. There the rule keeps the frame of its last draw, and moves only when the band draws again.
 
 ## Rate limits
 
@@ -109,7 +116,7 @@ The mod also does not draw OSC 8 links.
 
 | Option | Default | Meaning |
 |:---|:---|:---|
-| `barStyle` | `line` | Bar glyphs: `line`, `wave`, `hex`, `diamond`, `circle` or `block` |
+| `barStyle` | `smooth` | Bar glyphs: `smooth`, `line`, `wave`, `hex`, `diamond`, `circle` or `block` |
 | `animate` | `off` | Scroll the wave bars and pulse the badge every 2 seconds |
 | `usdToSgd` | `1.35` | Multiplier for the cost segment |
 | `cacheWarnLead` | `auto` | Seconds before expiry to warn: `auto` (60 for 5m, 300 for 1h), `60`, `120`, `300` or `600` |

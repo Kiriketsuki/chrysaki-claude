@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
 import { planLedger, ruleText } from '../hooks/ledger'
+import { bandRules } from '../hooks/draw'
+import { unpackCells } from '../hooks/raster'
 
 import { handoffPathFrom } from '../hooks/resume'
 
@@ -128,13 +130,36 @@ test('every bar in the band has one length, wide and medium', async ($, on) => {
   await $.session.measure(MEASURE)
   for (const columns of [200, 120]) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(columns) })
-    // A line-style bar is one uncoloured Text of rule glyphs. Its filled and
-    // empty runs are coloured Texts nested in it.
-    const bars = (await ui.findAll({ type: 'Text', text: /^[━─]{3,}$/ })).filter(b => b.props.color === undefined)
+    // On the terminal each smooth bar is one Raster row.
+    const bars = (await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('bar-'))
     expect(bars.length).toBeGreaterThanOrEqual(3)
-    expect(new Set(bars.map(b => b.text.length)).size).toBe(1)
+    expect(new Set(bars.map(b => b.props.columns)).size).toBe(1)
+    expect(bars.every(b => b.props.rows === 1)).toBe(true)
     await ui.unmount()
   }
+})
+
+test('the line style still draws its bars as rule glyphs', { options: { barStyle: 'line' } }, async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
+  // A line-style bar is one uncoloured Text of rule glyphs. Coloured Texts
+  // nested in it hold its filled and empty runs.
+  const bars = (await ui.findAll({ type: 'Text', text: /^[━─]{3,}$/ })).filter(b => b.props.color === undefined)
+  expect(bars.length).toBeGreaterThanOrEqual(3)
+  expect(new Set(bars.map(b => b.text.length)).size).toBe(1)
+  expect((await ui.findAll({ type: 'Raster' })).filter(r => String(r.key).startsWith('bar-')).length).toBe(0)
+  await ui.unmount()
+})
+
+test('off the terminal a smooth bar draws as Text on the track', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(200) })
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  // 80% of 16 cells is 12 full cells and 6 eighths.
+  expect(await ui.find({ type: 'Text', text: /^█{12}▊ {3}$/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('the header mirrors the brand run on the right', async ($, on) => {
@@ -293,7 +318,7 @@ test('a dashed rule parts the 5h row from the 7d row', { options: { ruleAnimatio
   }
 })
 
-test('the animated rule runs a gradient that moves with the sweep', async ($, on) => {
+test('the clock repaints the rule Raster without a redraw of the band', async ($, on) => {
   const clock = answerMeasure(on)
   on('env.set', async () => ({ value: undefined }))
   on('fs.exists', async () => ({ value: false }))
@@ -302,16 +327,36 @@ test('the animated rule runs a gradient that moves with the sweep', async ($, on
   on('store.get', async () => ({ value: undefined }))
   on('process.run', async () => ({ value: { ...RAN, exitCode: 1, stdout: '' } }))
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  const blits: { key: string; cells: string }[] = []
+  on('ui.blit', async (_$, e) => {
+    if ('cells' in e) blits.push({ key: e.key, cells: e.cells })
+    return { value: {} }
+  })
   await $.session.start({ cwd: '/home/k/repo', surface: 'terminal', isInteractive: true })
   await $.session.measure(MEASURE)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(238) })
-  const colours = async () => (await ui.findAll({ type: 'Text', text: /^──\s?$/ })).map(t => String(t.props.color))
-  const before = await colours()
-  expect(before.length).toBeGreaterThan(10)
-  expect(new Set(before).size).toBeGreaterThan(3)
+  const rule = await ui.find({ type: 'Raster', key: 'rule-1' })
+  expect(rule?.props.columns).toBe(bandRules(238)[0]?.width)
+  const drawn = String(rule?.props.cells)
+  const inks = unpackCells(drawn).filter(c => c.codePoint !== 0x20).map(c => c.fg)
+  expect(new Set(inks).size).toBeGreaterThan(10)
   await clock.advance(150 * 5)
-  const after = await colours()
-  expect(after[0]).not.toBe(before[0])
+  const sent = blits.filter(b => b.key === 'rule-1')
+  expect(sent.length).toBe(5)
+  expect(new Set(sent.map(b => b.cells)).size).toBe(5)
+  expect(sent[0]?.cells).not.toBe(drawn)
+  // The band did not draw again: the mounted Raster keeps the cells it drew.
+  expect(String((await ui.find({ type: 'Raster', key: 'rule-1' }))?.props.cells)).toBe(drawn)
+  await ui.unmount()
+})
+
+test('off the terminal the animated rule draws a still gradient of Text', async ($, on) => {
+  answerMeasure(on)
+  await $.session.measure(MEASURE)
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(238) })
+  const colours = (await ui.findAll({ type: 'Text', text: /^──\s?$/ })).map(t => String(t.props.color))
+  expect(colours.length).toBeGreaterThan(10)
+  expect(new Set(colours).size).toBeGreaterThan(3)
   await ui.unmount()
 })
 
