@@ -12,8 +12,10 @@ import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
 import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
 import type { BarStyle } from './format'
-import { ledgerRows, ledgerRules } from './ledger'
-import type { RuleSpec } from './ledger'
+import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
+import { loopSampler, mixHex, sampleRamp } from './gradient'
+import { packCells, paintCells } from './raster'
+import type { Paint } from './raster'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces } from './prims'
 import type { Table } from './prims'
@@ -102,8 +104,22 @@ type Seg = {
   fg: string
   bold?: boolean
   iconFg?: string
+  // Gradient stops for the words after the icon, drawn letter by letter.
+  ink?: readonly string[]
   press?: { key: string; label: string; hotkey: string; onPress: () => void }
   drop?: number
+}
+
+// Letters of `text`, each in its own colour along the `ink` run.
+function inked(T: Table, text: string, ink: readonly string[], bg: string, bold?: boolean): RenderElement[] {
+  const { Text } = T
+  const n = Math.max(1, text.trim().length - 1)
+  let k = 0
+  return [...text].map(ch => {
+    if (ch === ' ') return <Text backgroundColor={bg}> </Text>
+    const color = sampleRamp(ink, k++ / n)
+    return <Text backgroundColor={bg} color={color} bold={bold}>{ch}</Text>
+  })
 }
 
 function segBody(T: Table, s: Seg): RenderElement {
@@ -112,16 +128,22 @@ function segBody(T: Table, s: Seg): RenderElement {
     return (
       <Box key={`seg-${s.press.key}`} backgroundColor={s.bg}>
         <Text backgroundColor={s.bg}> </Text>
-        <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
+        {s.ink === undefined
+          ? <Button key={s.press.key} label={s.press.label} hotkey={s.press.hotkey} plain onPress={s.press.onPress} />
+          : <Button key={s.press.key} hotkey={s.press.hotkey} plain onPress={s.press.onPress}>{inked(T, s.press.label, s.ink, s.bg, s.bold)}</Button>}
         <Text backgroundColor={s.bg}> </Text>
       </Box>
     )
   }
   const at = s.text.indexOf(' ')
   if (s.iconFg === undefined || at < 0) return <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{` ${s.text} `}</Text>
+  const icon = <Text backgroundColor={s.bg} color={s.iconFg} bold>{` ${s.text.slice(0, at)}`}</Text>
+  if (s.ink !== undefined) {
+    return <Text backgroundColor={s.bg}>{[icon, <Text backgroundColor={s.bg}> </Text>, ...inked(T, s.text.slice(at + 1), s.ink, s.bg, s.bold), <Text backgroundColor={s.bg}> </Text>]}</Text>
+  }
   return (
     <Text backgroundColor={s.bg}>
-      <Text backgroundColor={s.bg} color={s.iconFg} bold>{` ${s.text.slice(0, at)}`}</Text>
+      {icon}
       <Text backgroundColor={s.bg} color={s.fg} bold={s.bold}>{`${s.text.slice(at)} `}</Text>
     </Text>
   )
@@ -179,19 +201,26 @@ function mirrored(T: Table, segs: readonly Seg[]): RenderElement[] {
 
 // --- Header --------------------------------------------------------------------
 
-// The header: the drawer chevron, the brand run (model on Emerald, version on
-// Royal Blue Lt, folder on Amethyst Lt), a rule in the prompt's colour, then
-// the mirror run with cost on Amethyst Lt, the session clock on Royal Blue Lt,
-// the inbox on Blonde and the account on Emerald, or Topaz for a work account.
-// Neighbours take hues far apart, so each powerline edge shows.
-function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
-  const { Box, Text, Button } = T
+// The gem type header: the drawer chevron, the brand run, a rule, then the
+// mirror run. The runs step down through dark grounds, Abyss to Raised to
+// Elevated, and the type carries the jewel: the model name, the folder and
+// the account run a gradient letter by letter. Alerts keep their fills.
+// Each zigzag edge cuts one ground into the next.
+const BRAND_INK = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean] as const
+// The brand run as a loop, for the drifting header rule.
+const brandAt = loopSampler(BRAND_INK)
+
+type HeaderPlan = { left: Seg[]; right: Seg[]; room: number }
+
+// The segments that fit and the room left for the rule. No drawing happens
+// here, so the sweep clock can size the header rule the same way.
+function headerPlan(d: BandData, inner: number, isCompact: boolean): HeaderPlan {
   const id = d.identity
   const u = d.usage
   const left: Seg[] = [
-    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.emerald, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt },
-    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.blueLight, fg: ROLE.text, drop: 1 }] : []),
-    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.amethystLight, fg: ROLE.text, bold: true, drop: 3 }] : []),
+    { text: `⬢ ${modelLabel(id?.model ?? '')}`, bg: CORE.abyss, fg: ROLE.text, bold: true, iconFg: ROLE.blondeLt, ink: BRAND_INK },
+    ...(id?.version && !isCompact ? [{ text: `◆ v${id.version}`, bg: CORE.raised, fg: ROLE.text, iconFg: ROLE.teal, ink: [ROLE.sec, ROLE.text], drop: 1 }] : []),
+    ...(!isCompact ? [{ text: `⌂ ${smartCwd(id?.cwd ?? '', d.home)}`, bg: CORE.elevated, fg: ROLE.text, bold: true, iconFg: ROLE.teal, ink: [ROLE.text, ROLE.blondeLt], drop: 3 }] : []),
   ]
   const email = id?.email ?? ''
   // The account list knows the work accounts. The config folder is the guess
@@ -199,9 +228,10 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const isWork = d.accounts.find(a => a.email === email.toLowerCase())?.isWork ?? id?.isWorkAccount ?? false
   const accountSeg: Seg = {
     text: `a: ${email}`,
-    bg: isWork ? CORE.topaz : CORE.emerald,
+    bg: CORE.abyss,
     fg: ROLE.text,
     bold: true,
+    ink: isWork ? [CORE.topaz, ROLE.blondeLt] : [ROLE.emeraldLt, ROLE.teal],
     press: { key: 'account', label: email, hotkey: 'a', onPress: d.onAccounts },
     drop: 4,
   }
@@ -246,8 +276,8 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
     ...warnSeg,
     ...outageSeg,
     ...shareSeg,
-    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.amethystLight, fg: ROLE.blondeLt, bold: true }]),
-    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.blueLight, fg: ROLE.text, drop: 2 }]),
+    ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.elevated, fg: ROLE.blondeLt, bold: true }]),
+    ...(u?.startedAt === undefined || isCompact ? [] : [{ text: `◷ ${sessionClock(d.now - u.startedAt)}`, bg: CORE.raised, fg: ROLE.sec, drop: 2 }]),
     ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: CORE.blonde, fg: CORE.abyss, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
@@ -256,11 +286,32 @@ function header(T: Table, d: BandData, inner: number, isCompact: boolean): Rende
   const chevron = 1
   const [fitLeft, fitRight] = fitSegs(left, right, inner - chevron - 2 - MIN_RULE)
   const room = Math.max(0, inner - chevron - segWidth(fitLeft) - segWidth(fitRight) - 2)
+  return { left: fitLeft, right: fitRight, room }
+}
+
+// The cells of the header rule at sweep frame `frame`: a faint brand loop
+// that drifts along it, one space at each end.
+export function headerRulePaints(room: number, frame: number): Paint[] {
+  const dashes = Array.from({ length: room }, (_, i) => ({ glyph: RULE, fg: mixHex(CORE.border, brandAt(i / Math.max(1, room) - frame / SWEEP_FRAMES), 0.55), bg: null }))
+  return [{ glyph: ' ', fg: null, bg: null }, ...dashes, { glyph: ' ', fg: null, bg: null }]
+}
+
+function headerRule(T: Table, d: BandData, room: number): RenderElement {
+  const { Text } = T
+  if (isRuleLive(T, d)) return paintRow(T, d.surface, 'header-rule', headerRulePaints(room, d.sweep))
+  return <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
+}
+
+function header(T: Table, d: BandData, inner: number, isCompact: boolean): RenderElement {
+  const { Box, Text, Button } = T
+  const id = d.identity
+  const u = d.usage
+  const { left: fitLeft, right: fitRight, room } = headerPlan(d, inner, isCompact)
   return (
     <Box key="header">
       <Button key="hint-toggle" label={d.isHintOpen ? '▾' : '▸'} plain onPress={d.onToggleHint} />
       {hoverGroup(T, 'brand', `${id?.model ?? 'model unknown'} · Claude Code ${id?.version ?? '?'} · ${id?.cwd ?? ''}`, zigzag(T, fitLeft))}
-      <Text color={frameColor(d)}>{` ${RULE.repeat(room)} `}</Text>
+      {headerRule(T, d, room)}
       {fitRight.length > 0
         ? hoverGroup(T, 'cost', u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`, mirrored(T, fitRight))
         : <Text />}
@@ -336,9 +387,18 @@ function compactLine(T: Table, d: BandData): RenderElement | null {
   return bits.length === 0 ? null : <Box>{bits}</Box>
 }
 
-// The ledger rules a band `columns` wide draws. A folded band has none.
-export function bandRules(columns: number): RuleSpec[] {
-  return columns < NARROW_COLUMNS ? [] : ledgerRules(Math.max(20, columns - RESERVE))
+// A Raster row the sweep clock repaints: its key and its cells at a frame.
+export type LiveStrip = { key: string; frame: (n: number) => string }
+
+// The Raster rows a band draws for `d`, as the sweep clock repaints them:
+// the header rule, then the ledger rules. A folded band has no ledger.
+export function bandStrips(d: BandData): LiveStrip[] {
+  const inner = Math.max(20, d.columns - RESERVE)
+  const isCompact = d.columns < NARROW_COLUMNS
+  const { room } = headerPlan(d, inner, isCompact)
+  const head: LiveStrip = { key: 'header-rule', frame: n => packCells(paintCells(headerRulePaints(room, n))) }
+  const rules = isCompact ? [] : ledgerRules(inner).map((r): LiveStrip => ({ key: r.key, frame: n => ruleFrame(r, n) }))
+  return [head, ...rules]
 }
 
 export function drawBand(T: Table, d: BandData): RenderElement {

@@ -2,8 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
-import { GEMS, facet, planLedger, ruleText } from '../hooks/ledger'
-import { bandRules } from '../hooks/draw'
+import { GEMS, facet, ledgerRules, planLedger, ruleText } from '../hooks/ledger'
 import { unpackCells } from '../hooks/raster'
 import { usageColor } from '../hooks/format'
 
@@ -172,6 +171,20 @@ test('the header mirrors the brand run on the right', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: '' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: / \$2\.70 / })).toBeDefined()
   await ui.unmount()
+})
+
+test('the header sets the model name in gem type on the Abyss', async ($, on) => {
+  answerMeasure(on)
+  on('session.model', async () => ({ value: 'claude-opus-5-5' }))
+  await $.session.measure(MEASURE)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(200) })
+    // Each letter is its own Text on the Abyss, coloured along the brand run.
+    const letters = (await ui.findAll({ type: 'Text', text: /^[A-Za-z0-9.]$/ })).filter(t => t.props.backgroundColor === '#0f1117')
+    expect(letters.length).toBeGreaterThan(5)
+    expect(new Set(letters.map(t => t.props.color)).size).toBeGreaterThan(4)
+    await ui.unmount()
+  }
 })
 
 test('the handoff key runs /context-handoff and copies the written path', async ($, on) => {
@@ -343,7 +356,7 @@ test('the clock repaints the rule Raster without a redraw of the band', async ($
   await $.session.measure(MEASURE)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(238) })
   const rule = await ui.find({ type: 'Raster', key: 'rule-1' })
-  expect(rule?.props.columns).toBe(bandRules(238)[0]?.width)
+  expect(rule?.props.columns).toBe(ledgerRules(238)[0]?.width)
   const drawn = String(rule?.props.cells)
   const inks = unpackCells(drawn).filter(c => c.codePoint !== 0x20).map(c => c.fg)
   expect(new Set(inks).size).toBeGreaterThan(10)
@@ -352,6 +365,8 @@ test('the clock repaints the rule Raster without a redraw of the band', async ($
   expect(sent.length).toBe(5)
   expect(new Set(sent.map(b => b.cells)).size).toBe(5)
   expect(sent[0]?.cells).not.toBe(drawn)
+  // The header rule drifts on the same clock.
+  expect(blits.filter(b => b.key === 'header-rule').length).toBe(5)
   // The band did not draw again: the mounted Raster keeps the cells it drew.
   expect(String((await ui.find({ type: 'Raster', key: 'rule-1' }))?.props.cells)).toBe(drawn)
   await ui.unmount()

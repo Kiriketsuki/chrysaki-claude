@@ -7,10 +7,9 @@ import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFi
 import type { AlertAction, CacheFileHost } from './cache'
 import { mergeIdentity, readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
 import type { Host } from './collect'
-import { bandRules, drawBand } from './draw'
-import type { BandData } from './draw'
-import { SWEEP_FRAMES, isRuleLive, ruleFrame } from './ledger'
-import type { RuleSpec } from './ledger'
+import { bandStrips, drawBand } from './draw'
+import type { BandData, LiveStrip } from './draw'
+import { SWEEP_FRAMES, isRuleLive } from './ledger'
 import type { BarStyle } from './format'
 import { kilo } from './format'
 import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from './limits'
@@ -554,8 +553,8 @@ type Runtime = {
   stepSweep: () => { frame: number; live: LiveRules | null }
 }
 
-// The rule Rasters of the last band drawn, and the site that holds them.
-type LiveRules = { requestId: string; rules: RuleSpec[] }
+// The Raster rows of the last band drawn, and the site that holds them.
+type LiveRules = { requestId: string; strips: LiveStrip[] }
 
 // Repaints the live rules at the next sweep frame. A blit the surface
 // refuses, such as one before the band mounts, costs nothing. The next draw
@@ -563,7 +562,7 @@ type LiveRules = { requestId: string; rules: RuleSpec[] }
 async function sweepRules($: EngineInterface, rt: Runtime): Promise<void> {
   const { frame, live } = rt.stepSweep()
   if (live === null) return
-  await Promise.all(live.rules.map(r => $.ui.blit({ requestId: live.requestId, key: r.key, cells: ruleFrame(r, frame) }).catch(() => ({}))))
+  await Promise.all(live.strips.map(r => $.ui.blit({ requestId: live.requestId, key: r.key, cells: r.frame(frame) }).catch(() => ({}))))
 }
 
 // Reads every value the band draws and starts the timers. session.start
@@ -808,7 +807,7 @@ export const register: Register = (on, options) => {
       isHintOpen,
       onToggleHint: () => { void toggleHint($) },
     }
-    liveRules = isRuleLive(table, data) ? { requestId: e.requestId, rules: bandRules(e.props.bodyColumns) } : null
+    liveRules = isRuleLive(table, data) ? { requestId: e.requestId, strips: bandStrips(data) } : null
     const band = drawBand(table, data)
     const { Box } = table
     return below ? <Box flexDirection="column">{band}{below}</Box> : band

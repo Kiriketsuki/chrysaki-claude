@@ -59,6 +59,16 @@ export function loopSampler(stops: readonly string[]): (t: number) => string {
   }
 }
 
+// The colour at `t` (0 to 1) along an open run of `stops`: 0 is the first
+// stop and 1 the last.
+export function sampleRamp(stops: readonly string[], t: number): string {
+  if (stops.length === 0) return '#000000'
+  if (stops.length === 1) return stops[0] as string
+  const x = Math.max(0, Math.min(1, t)) * (stops.length - 1)
+  const i = Math.min(Math.floor(x), stops.length - 2)
+  return mixHex(stops[i] as string, stops[i + 1] as string, x - i)
+}
+
 // The colour at `t` along a loop through `stops`: 0 and 1 are the first stop.
 export function sampleLoop(stops: readonly string[], t: number): string {
   return loopSampler(stops)(t)
