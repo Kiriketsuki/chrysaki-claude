@@ -52,7 +52,7 @@ A `/clear` keeps the process, starts a new session id and fires no `session.star
 
 ## Prompt cache warning
 
-Claude Code caches the conversation prefix. The cache lives for 1 hour on a subscription within plan usage, and for 5 minutes on an API key, a cloud provider, or in overage. Each request resets the timer. When the cache expires, the next turn writes the whole prefix again at 1.25x (5m) or 2x (1h) the input price.
+Claude Code caches the conversation prefix. On a subscription within plan usage, the cache lives for 1 hour. On an API key, a cloud provider, or in overage, it lives for 5 minutes. Each request resets the timer. When the cache expires, the next turn writes the whole prefix again at 1.25x (5m) or 2x (1h) the input price.
 
 The segment on the ctx line shows the time left. It is Emerald Lt while warm, Blonde inside the warning lead, and Error Lt when cold. The hover card shows the TTL, the expiry time, the tokens a cold turn writes, the hit ratio and the last miss cause.
 
@@ -92,7 +92,7 @@ The engine draws the permission mode under the prompt. The hint text after it, s
 
 ## Git key
 
-The git line carries a `g` key when the `git-pane` mod is loaded. Press `ctrl+x tab`, then `g`, to open the git pane.
+The git line carries a `g` key when Claude Code loads the `git-pane` mod. Press `ctrl+x tab`, then `g`, to open the git pane.
 
 ## Fallback
 
