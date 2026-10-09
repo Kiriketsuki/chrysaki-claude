@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn, StatuslineCodeks } from '../types'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn, StatuslineCodeks, BandEntry } from '../types'
 import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
 import type { AlertAction, CacheFileHost } from './cache'
@@ -22,6 +22,7 @@ import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
 import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
 import { CODEKS_FILE, codeksFrom } from './codeksfile'
+import { BAND_DIR, BAND_TICK_MS, collectBand } from './band'
 import { EMPTY_HISTORY, addSample, addTokens, historyKey, parseHistory } from './history'
 import type { UsageHistory } from './history'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
@@ -50,6 +51,7 @@ const outage = atom({ plugin: 'chrysaki-statusline', key: 'outage' } as const, n
 const lag = atom({ plugin: 'chrysaki-statusline', key: 'lag' } as const, null as StatuslineLag | null)
 const warn = atom({ plugin: 'chrysaki-statusline', key: 'warn' } as const, null as StatuslineWarn | null)
 const codeks = atom({ plugin: 'chrysaki-statusline', key: 'codeks' } as const, null as StatuslineCodeks | null)
+const bandItems = atom({ plugin: 'chrysaki-statusline', key: 'band' } as const, [] as BandEntry[])
 const shareOffer = atom({ plugin: 'chrysaki-statusline', key: 'shareOffer' } as const, null as ShareOffer | null)
 const usageHistory = atom({ plugin: 'chrysaki-statusline', key: 'usageHistory' } as const, EMPTY_HISTORY as UsageHistory)
 const ctxHistory = atom({ plugin: 'chrysaki-statusline', key: 'ctxHistory' } as const, [] as number[])
@@ -537,6 +539,33 @@ async function openCodeks($: EngineInterface): Promise<void> {
   else $.ui.toast('codeKs runs, but its mod is not loaded here. Run: ./install.sh --claude-mod', { timeoutMs: 8000 })
 }
 
+// --- Band protocol ---------------------------------------------------------------
+
+// Lists the band folder and keeps the fresh items of every contributor. A
+// missing folder means no contributor, which is the common case.
+async function refreshBand($: EngineInterface): Promise<void> {
+  const [runtime, now] = await Promise.all([$.env.get('XDG_RUNTIME_DIR'), $.clock.now()])
+  const dir = `${runtime ?? '/tmp'}/${BAND_DIR}`
+  const entries = await $.fs.list(dir).catch(() => [])
+  const names = entries.filter(e => e.kind === 'file' && e.name.endsWith('.json')).map(e => e.name.slice(0, -5))
+  const files = await Promise.all(names.map(async name => {
+    const text = await $.fs.read(`${dir}/${name}.json`).catch(() => null)
+    return typeof text === 'string' ? [{ name, text }] : []
+  }))
+  const next = collectBand(files.flat(), now)
+  if (JSON.stringify(next) !== JSON.stringify(await read($, bandItems))) await update($, bandItems, () => next)
+}
+
+// A press on a contributed segment runs its slash command.
+async function pressBand($: EngineInterface, e: BandEntry): Promise<void> {
+  if (e.command === undefined) return
+  try {
+    await $.command.run(e.args === undefined ? { command: e.command } : { command: e.command, args: e.args })
+  } catch (error) {
+    $.ui.toast(`/${e.command} from ${e.source} did not run: ${error instanceof Error ? error.message : String(error)}`, { timeoutMs: 8000 })
+  }
+}
+
 // --- Hint drawer ----------------------------------------------------------------
 
 async function loadHintOpen($: EngineInterface): Promise<void> {
@@ -627,6 +656,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
   $.clock.after(0, () => { void refreshResume(handoffHostOf($)) })
   $.clock.after(0, () => { void refreshLag($) })
   $.clock.after(0, () => { void refreshCodeks($) })
+  $.clock.after(0, () => { void refreshBand($) })
   return [
     $.clock.every(REFRESH_MS, () => {
       const isForced = rt.takeRemoteDue()
@@ -643,6 +673,7 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
     $.clock.every(CACHE_TICK_MS, () => { void refreshResume(handoffHostOf($)) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshLag($) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshCodeks($) }),
+    $.clock.every(BAND_TICK_MS, () => { void refreshBand($) }),
     ...(rt.isAnimated ? [$.clock.every(ANIMATE_MS, () => { void update($, phase, n => (n + 1) % 36) })] : []),
     ...(rt.isRuleAnimated ? [$.clock.every(SWEEP_MS, () => { void sweepRules($, rt) })] : []),
   ]
@@ -821,6 +852,7 @@ export const register: Register = (on, options) => {
       clocks = startup($, rt, clocks)
     }
     const [fetchState, down, offer, lagNow, warnNow, codeksNow] = await Promise.all([read($, limitsFetch), read($, outage), read($, shareOffer), read($, lag), read($, warn), read($, codeks)])
+    const contributed = await read($, bandItems)
     const [hist, ctxHist] = await Promise.all([read($, usageHistory), read($, ctxHistory)])
     const data: BandData = {
       usage: u, identity: id ?? lastIdentity, git: g, remote: r, inbox: n, phase: ph, now, home: home ?? '',
@@ -835,6 +867,8 @@ export const register: Register = (on, options) => {
       onLag: () => { void openLag($, lagNow) },
       codeks: codeksNow,
       onCodeks: () => { void openCodeks($) },
+      band: contributed,
+      onBand: entry => { void pressBand($, entry) },
       history: hist, ctxHistory: ctxHist,
       columns: e.props.bodyColumns, emblem, caption, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
       onContext: () => { void toastBreakdown($) },

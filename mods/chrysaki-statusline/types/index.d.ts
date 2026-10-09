@@ -7,6 +7,24 @@ export type StatuslineWindow = {
   resetsAt?: number
 }
 
+// The band protocol: one item another mod or process contributes to the
+// header, checked against protocol/chrysaki-band/band.d.ts.
+export type BandTone = 'calm' | 'info' | 'accent' | 'warn' | 'alert'
+
+export type BandEntry = {
+  // The file's source name, then the item's own id.
+  source: string
+  id: string
+  icon?: string
+  text: string
+  tone: BandTone
+  hint?: string
+  command?: string
+  args?: string
+  hotkey?: string
+  rank: number
+}
+
 // One rate-limit reading: epoch milliseconds, then the percent used.
 export type Sample = readonly [number, number]
 
@@ -221,6 +239,8 @@ declare module 'claude-code' {
       usageHistory: UsageHistory
       // The last context token counts of this session.
       ctxHistory: number[]
+      // The fresh items other mods contribute through the band protocol.
+      band: BandEntry[]
     }
   }
 }
