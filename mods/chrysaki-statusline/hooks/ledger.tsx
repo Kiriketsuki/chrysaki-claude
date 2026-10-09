@@ -11,7 +11,7 @@ import type { RenderElement } from 'claude-code'
 import type { StatuslineWindow } from '../types'
 import { cacheCard, toneColor } from './cache'
 import type { BandData } from './draw'
-import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, marker, smoothCells, untilReset } from './format'
+import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, marker, smoothCells, untilReset, usageColor } from './format'
 import { loopSampler, mixHex } from './gradient'
 import { CORE, ROLE } from './palette'
 import { frameColor, hoverGroup, spaces, truncate } from './prims'
@@ -63,14 +63,18 @@ function badge(T: Table, b: Badge): RenderElement[] {
 // --- Bars ------------------------------------------------------------------------
 
 // A colour zone of a bar: cells up to `until` percent of its length.
-type Zone = { until: number; color: string }
+export type Zone = { until: number; color: string }
 
-const USAGE_ZONES: readonly Zone[] = [
-  { until: 50, color: ROLE.emeraldLt },
-  { until: 75, color: ROLE.teal },
-  { until: 90, color: ROLE.blondeLt },
-  { until: Infinity, color: ROLE.error },
-]
+// How a bar colours a place along it, in percent of its length, and the
+// colour of its calm first zone. A percent in the calm zone keeps the text
+// colour.
+export type Scale = { at: (position: number, length: number) => string; calm: string }
+
+const USAGE_SCALE: Scale = { at: p => usageColor(p), calm: ROLE.emeraldLt }
+
+export function zoneScale(zones: readonly Zone[]): Scale {
+  return { at: (p, length) => blendZones(zones, p, length), calm: zones[0]?.color ?? ROLE.text }
+}
 
 // The context zones sit at fixed token counts, so they move with the window.
 function contextZones(window: number): Zone[] {
@@ -106,10 +110,10 @@ export function blendZones(zones: readonly Zone[], position: number, length: num
 // The cells of a smooth bar. The track is a Border ground under every cell,
 // so the empty part of a partial cell shows as track. A filled part takes the
 // colour at its own middle.
-export function smoothPaints(pct: number, zones: readonly Zone[], length: number): Paint[] {
+export function smoothPaints(pct: number, scale: Scale, length: number): Paint[] {
   return smoothCells(pct, length).map((c, i) => ({
     glyph: c.glyph,
-    fg: c.fill === 0 ? null : blendZones(zones, ((i + c.fill / 2) / length) * 100, length),
+    fg: c.fill === 0 ? null : scale.at(((i + c.fill / 2) / length) * 100, length),
     bg: SOCKET,
   }))
 }
@@ -134,18 +138,18 @@ export function paintRow(T: Table, surface: string, key: string, paints: readonl
   )
 }
 
-// A bar coloured by the zone each cell sits in. `reached` is the colour of the
-// last filled cell, or the text colour while the bar stays in its first zone.
-function zoneBar(T: Table, d: BandData, key: string, pct: number, zones: readonly Zone[], length: number): Bar {
+// A bar coloured by its scale at each cell. `reached` is the colour at the
+// percent, or the text colour while the bar stays in its calm zone.
+function zoneBar(T: Table, d: BandData, key: string, pct: number, scale: Scale, length: number): Bar {
   const { Text } = T
+  const top = scale.at(pct, length)
   if (d.barStyle === 'smooth') {
-    const paints = smoothPaints(pct, zones, length)
-    const top = zoneAt(zones, pct)
+    const paints = smoothPaints(pct, scale, length)
     const isEmpty = paints.every(p => p.fg === null)
-    return { el: paintRow(T, d.surface, `bar-${key}`, paints), reached: isEmpty || top === zones[0]?.color ? ROLE.text : top }
+    return { el: paintRow(T, d.surface, `bar-${key}`, paints), reached: isEmpty || top === scale.calm ? ROLE.text : top }
   }
   const cells = barCells(pct, d.barStyle, d.phase % 4, length)
-  const colors = cells.map((c, i) => (c.isFilled ? zoneAt(zones, ((i + 1) / length) * 100) : SOCKET))
+  const colors = cells.map((c, i) => (c.isFilled ? scale.at(((i + 0.5) / length) * 100, length) : SOCKET))
   const runs: { color: string; text: string }[] = []
   cells.forEach((c, i) => {
     const color = colors[i] ?? SOCKET
@@ -153,21 +157,19 @@ function zoneBar(T: Table, d: BandData, key: string, pct: number, zones: readonl
     if (last !== undefined && last.color === color) last.text += c.glyph
     else runs.push({ color, text: c.glyph })
   })
-  const filled = cells.filter(c => c.isFilled).length
-  const top = filled === 0 ? undefined : colors[filled - 1]
-  const reached = top === undefined || top === zones[0]?.color ? ROLE.text : top
-  return { el: <Text>{runs.map(r => <Text color={r.color}>{r.text}</Text>)}</Text>, reached }
+  const isEmpty = cells.every(c => !c.isFilled)
+  return { el: <Text>{runs.map(r => <Text color={r.color}>{r.text}</Text>)}</Text>, reached: isEmpty || top === scale.calm ? ROLE.text : top }
 }
 
 // A bar in one colour, for the cache that drains as it cools.
 function plainBar(T: Table, d: BandData, key: string, pct: number, color: string, length: number): RenderElement {
-  return zoneBar(T, d, key, pct, [{ until: Infinity, color }], length).el
+  return zoneBar(T, d, key, pct, { at: () => color, calm: color }, length).el
 }
 
 // A bar with no figure yet: the bare track.
 function emptyBar(T: Table, d: BandData, key: string, length: number): RenderElement {
   const { Text } = T
-  if (d.barStyle === 'smooth') return paintRow(T, d.surface, `bar-${key}`, smoothPaints(0, [], length))
+  if (d.barStyle === 'smooth') return paintRow(T, d.surface, `bar-${key}`, smoothPaints(0, USAGE_SCALE, length))
   return <Text color={SOCKET}>{'─'.repeat(length)}</Text>
 }
 
@@ -219,7 +221,7 @@ function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | 
   if (w === undefined) {
     return cell(T, `cell-${label}`, usageWidth(bar), [...head, emptyBar(T, d, label, bar), spaces(T, 1 + FIG + 1), resetKey(T, d, label, 'read')])
   }
-  const b = zoneBar(T, d, label, pct, USAGE_ZONES, bar)
+  const b = zoneBar(T, d, label, pct, USAGE_SCALE, bar)
   const reset = untilReset(w.resetsAt, d.now)
   const when = w.resetsAt === undefined ? 'reset time unknown' : `resets ${new Date(w.resetsAt).toISOString().slice(11, 16)} UTC, in ${reset}`
   const extra = label === '7d' ? scopedText(d) : ''
@@ -258,7 +260,7 @@ function contextCell(T: Table, d: BandData, bar: number): RenderElement {
       ...head, emptyBar(T, d, 'ctx', bar), spaces(T, 1 + FIG + 1), fig(T, name, AMOUNT, ROLE.muted), spaces(T, 1), contextKey(T, d, undefined),
     ])
   }
-  const b = zoneBar(T, d, 'ctx', u.ctxPercent, contextZones(u.ctxWindow), bar)
+  const b = zoneBar(T, d, 'ctx', u.ctxPercent, zoneScale(contextZones(u.ctxWindow)), bar)
   const used = tokens === undefined ? '' : kilo(tokens)
   const of = `/${kilo(u.ctxWindow)}`
   return cell(T, 'cell-ctx', contextWidth(bar), [

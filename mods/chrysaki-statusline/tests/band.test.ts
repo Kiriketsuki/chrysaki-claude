@@ -5,6 +5,7 @@ import type { Engine, MockClock } from 'claude-code/testing'
 import { planLedger, ruleText } from '../hooks/ledger'
 import { bandRules } from '../hooks/draw'
 import { unpackCells } from '../hooks/raster'
+import { usageColor } from '../hooks/format'
 
 import { handoffPathFrom } from '../hooks/resume'
 
@@ -56,10 +57,10 @@ test('draws the four lines with the bash thresholds on every surface', async ($,
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(160) })
-    // A percent takes the colour of the bar zone it reached: 80% sits in the
-    // Blonde Lt zone, 20% stays in the first zone and keeps the text colour.
+    // A percent takes the ramp colour it reached: 80% sits between amber and
+    // red. 20% stays in the green zone and keeps the text colour.
     const five = await ui.find({ type: 'Text', text: /^ ?80%$/ })
-    expect(five?.props.color).toBe('#fcc96a')
+    expect(five?.props.color).toBe(usageColor(80))
     const seven = await ui.find({ type: 'Text', text: /^ ?20%$/ })
     expect(seven?.props.color).toBe('#e0e2ea')
     expect(await ui.find({ type: 'Text', text: /handoff/ })).toBeDefined()

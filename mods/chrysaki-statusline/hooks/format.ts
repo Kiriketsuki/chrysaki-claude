@@ -1,7 +1,8 @@
 // Pure helpers: thresholds, text formats and parsers. Each one mirrors a
 // block of statusline-command.sh, named in its comment.
 
-import { ROLE } from './palette'
+import { mixHex } from './gradient'
+import { CORE, ROLE } from './palette'
 
 export type BarStyle = 'smooth' | 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
 
@@ -17,6 +18,21 @@ export function sevenDayColor(pct: number): string {
   if (pct >= 75) return ROLE.error
   if (pct >= 50) return ROLE.warn
   return ROLE.sec
+}
+
+// The 5h and 7d bar ramp: Emerald Lt up to 50%. From 50% the colour mixes
+// toward Peridot, a green-yellow, then reaches amber (Blonde) at 75% and
+// Error Lt at 90%. The mix runs in OKLab, so it never passes through grey.
+const USAGE_STOPS: readonly (readonly [number, string])[] = [[50, ROLE.emeraldLt], [62.5, CORE.peridot], [75, ROLE.warn], [90, ROLE.error]]
+
+export function usageColor(pct: number): string {
+  if (pct <= 50) return ROLE.emeraldLt
+  for (let k = 0; k < USAGE_STOPS.length - 1; k++) {
+    const [a, from] = USAGE_STOPS[k] as readonly [number, string]
+    const [b, to] = USAGE_STOPS[k + 1] as readonly [number, string]
+    if (pct <= b) return mixHex(from, to, (pct - a) / (b - a))
+  }
+  return ROLE.error
 }
 
 // ctx: Teal, orange from 50 percent, Ruby from 128k tokens absolute.

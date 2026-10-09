@@ -10,7 +10,7 @@ import type { RenderElement } from 'claude-code'
 import type { AccountMenu, CacheView, FirefoxProfile, ShareOffer, StatuslineAccount, StatuslineLag, StatuslineWarn, StatuslineCache, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage } from '../types'
 import { NEW_PROFILE, accountLabel } from './accounts'
 import { toneColor } from './cache'
-import { costSgd, ctxColor, fiveHourColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd } from './format'
+import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessionClock, sevenDayColor, smartCwd, usageColor } from './format'
 import type { BarStyle } from './format'
 import { ledgerRows, ledgerRules } from './ledger'
 import type { RuleSpec } from './ledger'
@@ -328,8 +328,8 @@ function compactLine(T: Table, d: BandData): RenderElement | null {
     if (bits.length > 0) bits.push(<Text color={RULE_COLOR}>{'  ◆  '}</Text>)
     bits.push(el)
   }
-  if (u?.fiveHour) add(<Text color={fiveHourColor(u.fiveHour.percent)}>{`5h ${u.fiveHour.percent}%`}</Text>)
-  if (u?.sevenDay) add(<Text color={sevenDayColor(u.sevenDay.percent)}>{`7d ${u.sevenDay.percent}%`}</Text>)
+  if (u?.fiveHour) add(<Text color={usageColor(u.fiveHour.percent)}>{`5h ${u.fiveHour.percent}%`}</Text>)
+  if (u?.sevenDay) add(<Text color={u.sevenDay.percent < 50 ? sevenDayColor(u.sevenDay.percent) : usageColor(u.sevenDay.percent)}>{`7d ${u.sevenDay.percent}%`}</Text>)
   if (u?.ctxPercent !== undefined) add(<Text color={ctxColor(u.ctxPercent, u.ctxTokens)}>{`ctx ${u.ctxPercent}%${isHandoffDue(u.ctxTokens) ? ' ⬢' : ''}`}</Text>)
   if (d.cacheView) add(<Text color={toneColor(d.cacheView.tone)}>{`${HOURGLASS} ${d.cacheView.label}`}</Text>)
   if (g) add(<Text color={ROLE.emeraldLt}>{`⎇ ${g.branch} +${g.insertions} -${g.deletions}`}</Text>)

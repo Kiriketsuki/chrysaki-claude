@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { smoothCells } from '../hooks/format'
+import { smoothCells, usageColor } from '../hooks/format'
 import { mixHex } from '../hooks/gradient'
-import { blendZones, ledgerRules, rulePaints, smoothPaints } from '../hooks/ledger'
+import { blendZones, ledgerRules, rulePaints, smoothPaints, zoneScale } from '../hooks/ledger'
 import { CORE, ROLE } from '../hooks/palette'
 import { DEFAULT_COLOR, packCells, paintCells, unpackCells } from '../hooks/raster'
 
@@ -44,10 +44,22 @@ describe('smooth bars', () => {
   })
 
   test('the track sits under every cell and empty cells carry no ink', async () => {
-    const paints = smoothPaints(30, ZONES, 8)
+    const paints = smoothPaints(30, zoneScale(ZONES), 8)
     expect(paints.every(p => p.bg === CORE.border)).toBe(true)
     expect(paints.filter(p => p.fg !== null).length).toBe(3)
     expect(paints[7]?.fg).toBeNull()
+  })
+})
+
+describe('the 5h and 7d ramp', () => {
+  test('green to 50, a green-yellow mix, amber at 75, red at 90', async () => {
+    expect(usageColor(30)).toBe(ROLE.emeraldLt)
+    expect(usageColor(50)).toBe(ROLE.emeraldLt)
+    expect(usageColor(62.5)).toBe(mixHex(ROLE.emeraldLt, CORE.peridot, 1))
+    expect(usageColor(75)).toBe(mixHex(CORE.peridot, ROLE.warn, 1))
+    expect(usageColor(90)).toBe(mixHex(ROLE.warn, ROLE.error, 1))
+    expect(usageColor(95)).toBe(ROLE.error)
+    expect(usageColor(56)).not.toBe(ROLE.emeraldLt)
   })
 })
 
