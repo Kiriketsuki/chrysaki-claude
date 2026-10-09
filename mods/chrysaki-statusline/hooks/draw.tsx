@@ -14,7 +14,7 @@ import { costSgd, ctxColor, isHandoffDue, leftEdge, modelLabel, rightEdge, sessi
 import type { BarStyle } from './format'
 import type { UsageHistory } from './history'
 import { accountRows } from './dropdown'
-import { CREST_COLUMNS, bandEmblem, captionRow, crestFolded, crestWidth, emblemColumn } from './crest'
+import { bandEmblem, captionRow, crestFolded, crestWidth, emblemColumn } from './crest'
 import { SWEEP_FRAMES, isRuleLive, ledgerRows, ledgerRules, paintRow, ruleFrame } from './ledger'
 import { loopSampler, mixHex, readableGround, readableInk, sampleRamp } from './gradient'
 import { packCells, paintCells } from './raster'
@@ -96,9 +96,6 @@ export type BandData = {
 
 // Below this width the band folds to the header and one line.
 export const NARROW_COLUMNS = 100
-// At this width and up, a row parts the header from the ledger. It holds the
-// caption beside the crest, or the account dropdown.
-const SPACER_COLUMNS = CREST_COLUMNS
 // The engine draws its collapse mark `[-]` over the last cells of the band's
 // first row. That row is the blank top margin, so the header runs full width.
 const RESERVE = 0
@@ -320,11 +317,9 @@ function headerPlan(d: BandData, inner: number, isCompact: boolean, hasCrest = f
     bold: true,
     press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
   }]
-  const bandSegs = d.band.map(e => bandSeg(d, e))
   const right: Seg[] = [
     ...lagSeg,
     ...warnSeg,
-    ...bandSegs,
     ...outageSeg,
     ...shareSeg,
     ...(u?.costUsd === undefined ? [] : [{ text: `◈ $${costSgd(u.costUsd, d.usdToSgd)}`, bg: CORE.elevated, fg: ROLE.blondeLt, bold: true }]),
@@ -406,26 +401,48 @@ export function bandStrips(d: BandData): LiveStrip[] {
   return [head, ...rules]
 }
 
+// The row of items other mods contribute through the band protocol, under
+// the header. Each item is a segment in its tone, with the same contrast
+// guard as the header. On the terminal hexagon caps close each one, as the
+// ledger badges do. Null while no mod contributes.
+function modRow(T: Table, d: BandData): RenderElement | null {
+  if (d.band.length === 0) return null
+  const { Box, Text } = T
+  const hasCaps = d.surface === 'terminal'
+  const parts = d.band.flatMap(e => {
+    const raw = bandSeg(d, e)
+    const s = { ...raw, bg: readableGround(raw.bg, raw.fg) }
+    return [
+      ...(hasCaps ? [<Text color={s.bg}>{'\ue0b2'}</Text>] : []),
+      segBody(T, s),
+      ...(hasCaps ? [<Text color={s.bg}>{'\ue0b0'}</Text>] : []),
+      <Text>{'  '}</Text>,
+    ]
+  })
+  return <Box key="mod-row" paddingLeft={1} overflow="hidden">{parts}</Box>
+}
+
 export function drawBand(T: Table, d: BandData): RenderElement {
   const { Box } = T
   const inner = Math.max(20, d.columns - RESERVE)
+  const mods = modRow(T, d)
   if (d.columns < NARROW_COLUMNS) {
-    const lines = [header(T, d, inner, true), compactLine(T, d)]
+    const lines = [header(T, d, inner, true), mods, compactLine(T, d)]
     return <Box flexDirection="column" marginTop={1}>{lines.filter((l): l is RenderElement => l !== null)}</Box>
   }
-  // One empty row parts the band from the transcript above it. The drawer
-  // slot under the header holds the account dropdown, or stays empty as a
-  // spacer on a wide band.
+  // One empty row parts the band from the transcript above it. Under the
+  // header come the account dropdown while it is open, the mod row, then one
+  // empty row before the ledger, as the empty row above the prompt.
   const menu = accountRows(T, d)
+  const spacer = <Box key="spacer" height={1} />
+  const middle = [...(mods === null ? [] : [mods]), spacer]
   const emblem = bandEmblem(d)
   if (emblem !== null) {
     // The crest: the mark beside the header and the row under it. That row
     // holds the caption, or the account dropdown while it is open.
     const side = [header(T, d, inner - crestWidth(d), false, true), ...(menu.length > 0 ? menu : [captionRow(T, d)])]
     const crest = <Box key="crest">{emblemColumn(T, emblem)}<Box flexDirection="column" flexGrow={1}>{side}</Box></Box>
-    return <Box flexDirection="column" marginTop={1}>{[crest, ...ledgerRows(T, d, inner)]}</Box>
+    return <Box flexDirection="column" marginTop={1}>{[crest, ...middle, ...ledgerRows(T, d, inner)]}</Box>
   }
-  // A folded crest gives its row back, so the band stays compact.
-  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS && !crestFolded(d) ? [<Box key="drawer" height={1} />] : []
-  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...slot, ...ledgerRows(T, d, inner)]}</Box>
+  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...menu, ...middle, ...ledgerRows(T, d, inner)]}</Box>
 }

@@ -25,15 +25,12 @@
     "emblem": {
       "type": "string",
       "title": "Crest mark",
-      "description": "The Chrysaki mark beside the header on a wide terminal band. none keeps the ⬢ glyph",
-      "default": "cube-emerald-plain",
+      "description": "The Chrysaki mark beside the header on a wide terminal band: a regular hexagon in Emerald tones, the tri-primary faces, or one colour. none keeps the hexagon glyph",
+      "default": "hex-emerald",
       "options": [
-        "cube-emerald-plain",
-        "cube-tri-plain",
-        "cube-mono-plain",
-        "cube-emerald",
-        "cube-tri",
-        "cube-mono",
+        "hex-emerald",
+        "hex-tri",
+        "hex-mono",
         "none"
       ]
     },
