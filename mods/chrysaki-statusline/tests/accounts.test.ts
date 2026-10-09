@@ -2,19 +2,25 @@ import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { SEED_ACCOUNTS, guessWork, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from '../hooks/accounts'
+import { guessWork, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from '../hooks/accounts'
 
 const RAN = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const NOW = Date.parse('2098-12-31T19:35:00Z')
+const PERSONAL = JSON.stringify({ accounts: [{ email: 'me@gmail.com', profile: 'Original profile' }, { email: 'ana@work.example', profile: 'Work Claude', isWork: true }, { email: 'ben@work.example', profile: 'Work Claude 2', isWork: true }], sharePartners: { 'ana@work.example': 'ben@work.example', 'ben@work.example': 'ana@work.example' } })
 const FF = '/home/k/.mozilla/firefox'
+const SEED = [
+  { email: 'me@gmail.com', profile: 'Original profile', path: '', isWork: false },
+  { email: 'ana@work.example', profile: 'Work Claude', path: '', isWork: true },
+  { email: 'ben@work.example', profile: 'Work Claude 2', path: '', isWork: true },
+]
 const PROFILES = `Original profile\t${FF}/a.default-release\nWork Claude\t${FF}/b.Profile 6\nWork Claude 2\t${FF}/c.Profile 7\n`
 
 describe('the account model', () => {
   test('profiles parse from the lister and fill in paths by name', async () => {
     const list = parseProfiles(PROFILES + 'bad line\nNo path\trelative\n')
     expect(list.map(p => p.name)).toEqual(['Original profile', 'Work Claude', 'Work Claude 2'])
-    const resolved = resolvePaths(SEED_ACCOUNTS, list)
-    expect(resolved.find(a => a.email === 'limj@aurrigo.com')?.path).toBe(`${FF}/c.Profile 7`)
+    const resolved = resolvePaths(SEED, list)
+    expect(resolved.find(a => a.email === 'ben@work.example')?.path).toBe(`${FF}/c.Profile 7`)
   })
 
   test('the store value is checked, and an email adds once', async () => {
@@ -27,7 +33,7 @@ describe('the account model', () => {
       { email: 'x@y.io', profile: 'q', path: '/q', isWork: true },
     ])
     expect(guessWork('a@gmail.com')).toBe(false)
-    expect(guessWork('a@aurrigo.com')).toBe(true)
+    expect(guessWork('a@work.example')).toBe(true)
   })
 })
 
@@ -45,7 +51,8 @@ async function start($: Engine, on: On): Promise<Seen> {
     if (e.argv[0]?.endsWith('/bin/firefox-profiles')) return { value: { ...RAN, stdout: PROFILES } }
     return { value: { ...RAN, exitCode: 1, stdout: '' } }
   })
-  on('fs.read', async () => ({ value: JSON.stringify({ oauthAccount: { emailAddress: 'kiriketsuki@gmail.com' } }) }))
+  // The personal config names the accounts and the share pairs. Every other read is the credentials file.
+  on('fs.read', async (_$, e) => ({ value: e.path === '/home/k/.config/chrysaki/claude.json' ? PERSONAL : JSON.stringify({ oauthAccount: { emailAddress: 'me@gmail.com' } }) }))
   on('fs.exists', async () => ({ value: true }))
   on('env.set', async (_$, e) => {
     seen.env.push([e.name, e.value])
@@ -78,7 +85,7 @@ test('the account segment opens the dropdown, and a pick logs in through the pro
   await ui.press({ key: 'account' })
   const pick = await ui.find({ key: 'account-pick' })
   expect(pick).toBeDefined()
-  await ui.press({ key: 'pick-jlim@aurrigo.com' })
+  await ui.press({ key: 'pick-ana@work.example' })
   expect(seen.ran).toEqual(['login'])
   expect(seen.env).toContainEqual(['CHRYSAKI_LOGIN_PROFILE', `${FF}/b.Profile 6`])
   expect(seen.env.some(([name, value]) => name === 'BROWSER' && (value ?? '').endsWith('/bin/open-in-profile'))).toBe(true)
@@ -91,7 +98,7 @@ test('picking the account in use runs no login', async ($, on) => {
   const seen = await start($, on)
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
   await ui.press({ key: 'account' })
-  await ui.press({ key: 'pick-kiriketsuki@gmail.com' })
+  await ui.press({ key: 'pick-me@gmail.com' })
   expect(seen.ran).toEqual([])
   await ui.unmount()
 })

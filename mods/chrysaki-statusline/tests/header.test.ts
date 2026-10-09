@@ -7,7 +7,7 @@ const seg = (text: string, drop?: number) => ({ text, drop })
 
 describe('fitSegs', () => {
   const left = [seg('⬢ Opus 5.5'), seg('◆ v2.1.292', 1), seg('⌂ Aurrigo/AutoConnect', 3)]
-  const right = [seg('o: ⚠ major'), seg('◈ $11.02'), seg('◷ 59m 06s', 2), seg('a: limj@aurrigo.com', 4)]
+  const right = [seg('o: ⚠ major'), seg('◈ $11.02'), seg('◷ 59m 06s', 2), seg('a: ben@work.example', 4)]
 
   test('keeps every segment when they fit', () => {
     const [l, r] = fitSegs(left, right, 200)

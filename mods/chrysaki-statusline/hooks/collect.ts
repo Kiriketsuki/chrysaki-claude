@@ -4,8 +4,9 @@
 
 import type { ProcessRunInit, ProcessRunResult, SessionMeasureInput, SessionUsage } from 'claude-code'
 
-import type { StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage, StatuslineWindow } from '../types'
+import type { StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage, StatuslineWindow, PersonalConfig } from '../types'
 import { inboxDepth, parseShortstat, repoPathFromRemote } from './format'
+import { configDirFor } from './personal'
 
 // What the collectors need from the engine. register.tsx builds it from $,
 // because the engine allows $ only in functions of the hooks module itself.
@@ -75,7 +76,7 @@ export function mergeIdentity(next: StatuslineIdentity, prev: StatuslineIdentity
   }
 }
 
-export async function readIdentity(host: Host): Promise<StatuslineIdentity> {
+export async function readIdentity(host: Host, personal: PersonalConfig): Promise<StatuslineIdentity> {
   const [model, version, cwd, home, configDir] = await Promise.all([
     host.model().catch(() => ''),
     host.version().catch(() => ''),
@@ -83,8 +84,7 @@ export async function readIdentity(host: Host): Promise<StatuslineIdentity> {
     host.home(),
     host.configDir(),
   ])
-  const dir = configDir ?? (cwd.includes('/workdev/Aurrigo') ? `${home}/.claude-aurrigo` : `${home}/.claude`)
-  const isWorkAccount = dir.endsWith('/.claude-aurrigo')
+  const { dir, isWork: isWorkAccount } = configDirFor(personal, cwd, configDir, home ?? '')
   // The personal account keeps .claude.json at HOME. Others keep it in the config dir.
   const credsPath = dir.endsWith('/.claude') ? `${home}/.claude.json` : `${dir}/.claude.json`
   let email = 'unknown'
@@ -151,19 +151,16 @@ export async function readGit(host: Host, cwd: string): Promise<StatuslineGit | 
   }
 }
 
-// fetch-stats.sh: picks the gh account by repo owner and skips unknown owners.
-const OWNER_ACCOUNT: Record<string, string> = {
-  'Jovian-Aurrigo': 'Jovian-Aurrigo',
-  'aurrigo-software-dev': 'Jovian-Aurrigo',
-  Kiriketsuki: 'Kiriketsuki',
-}
-
-export async function readRemote(host: Host, git: StatuslineGit, cwd: string, now: number): Promise<StatuslineRemote | null> {
-  const account = OWNER_ACCOUNT[git.repoPath.split('/')[0] ?? '']
-  if (account === undefined) return null
-  const token = (await out(host, ['gh', 'auth', 'token', '--user', account], cwd))?.trim()
-  if (token === undefined || token === '') return null
-  const env = { GH_TOKEN: token }
+// The gh account comes from the personal config's owner map. An owner it
+// does not name uses gh's active login.
+export async function readRemote(host: Host, git: StatuslineGit, cwd: string, now: number, accounts: Readonly<Record<string, string>>): Promise<StatuslineRemote | null> {
+  const account = accounts[git.repoPath.split('/')[0] ?? '']
+  let env: Record<string, string> | undefined
+  if (account !== undefined) {
+    const token = (await out(host, ['gh', 'auth', 'token', '--user', account], cwd))?.trim()
+    if (token === undefined || token === '') return null
+    env = { GH_TOKEN: token }
+  }
   const issues = await out(host, ['gh', 'issue', 'list', '--repo', git.repoPath, '--state', 'open', '--json', 'number', '--limit', '500'], cwd, env)
   const prs = await out(host, ['gh', 'pr', 'list', '--repo', git.repoPath, '--head', git.branch, '--state', 'open', '--json', 'number,title'], cwd, env)
   let prNumber: number | null = null
@@ -184,10 +181,12 @@ export async function readRemote(host: Host, git: StatuslineGit, cwd: string, no
   return { issues: issueCount, prNumber, prTitle, fetchedAt: now }
 }
 
-export async function readInbox(host: Host, cwd: string): Promise<number> {
-  const path = `${cwd}/001-Inbox/Scratch Book.md`
+// The inbox depth from the personal config's notes file, or 0 without one.
+export async function readInbox(host: Host, cwd: string, inbox: PersonalConfig['inbox']): Promise<number> {
+  if (inbox === null || cwd === '') return 0
+  const path = `${cwd}/${inbox.file}`
   try {
-    return (await host.exists(path)) ? inboxDepth(await host.readFile(path)) : 0
+    return (await host.exists(path)) ? inboxDepth(await host.readFile(path), inbox.heading) : 0
   } catch {
     return 0
   }

@@ -6,12 +6,6 @@
 
 import type { ShareOffer, StatuslineAccount } from '../types'
 
-// Each work account shares its new artifacts with the other one.
-export const SHARE_PARTNERS: Readonly<Record<string, string>> = {
-  'jlim@aurrigo.com': 'limj@aurrigo.com',
-  'limj@aurrigo.com': 'jlim@aurrigo.com',
-}
-
 // The $.store key of the artifact URLs that had an offer. A republish of
 // the same artifact never offers again.
 export const OFFERED_KEY = 'shareOffered'
@@ -51,10 +45,11 @@ export function withOffered(list: readonly string[], url: string): string[] {
 // The offer for a new artifact, or null when it had one already or the
 // account has no partner. The profile path is empty when no account entry
 // names one, and the artifact then opens in the default browser.
-export function offerFor(url: string, email: string, accounts: readonly StatuslineAccount[], offered: readonly string[], now: number): ShareOffer | null {
+// `partners` comes from the personal config: each account's share partner.
+export function offerFor(url: string, email: string, accounts: readonly StatuslineAccount[], offered: readonly string[], now: number, partners: Readonly<Record<string, string>>): ShareOffer | null {
   if (offered.includes(url)) return null
   const owner = email.trim().toLowerCase()
-  const partner = SHARE_PARTNERS[owner]
+  const partner = partners[owner]
   if (partner === undefined) return null
   const path = accounts.find(a => a.email === owner)?.path ?? ''
   return { url, owner, partner, path, at: now }

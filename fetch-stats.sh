@@ -2,7 +2,10 @@
 # Fetches open GitHub issue count for the current repo and writes to a per-repo cache.
 # Cache file is keyed by repo slug so multiple Claude Code instances don't collide.
 # Cross-platform: Windows Git Bash PATH additions are only applied when present.
-[ -d "/c/Users/Kidriel/AppData/Local/Microsoft/WinGet/Links" ] && export PATH="$PATH:/c/Users/Kidriel/AppData/Local/Microsoft/WinGet/Links"
+if [ -n "${LOCALAPPDATA:-}" ]; then
+  _links="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || printf '%s' "$LOCALAPPDATA")/Microsoft/WinGet/Links"
+  [ -d "$_links" ] && export PATH="$PATH:$_links"
+fi
 [ -d "/c/Program Files/GitHub CLI" ] && export PATH="$PATH:/c/Program Files/GitHub CLI"
 
 remote=$(git remote get-url origin 2>/dev/null)
@@ -16,13 +19,17 @@ repo_path=$(echo "$remote" | sed 's|.*github\.com[:/]||' | sed 's|.*github-[a-z]
 repo_slug=$(echo "$repo_path" | tr '/' '_')
 CACHE_FILE="/tmp/.claude_stats_cache_${repo_slug}"
 
+# The personal config's githubAccounts map picks the gh account by repo owner.
+# An owner it does not name uses gh's active login.
 owner=$(echo "$repo_path" | cut -d'/' -f1)
-case "$owner" in
-  Jovian-Aurrigo|aurrigo-software-dev) GH_TOKEN=$(gh auth token --user Jovian-Aurrigo 2>/dev/null) ;;
-  Kiriketsuki) GH_TOKEN=$(gh auth token --user Kiriketsuki 2>/dev/null) ;;
-  *) exit 0 ;;
-esac
-export GH_TOKEN
+PERSONAL="${CHRYSAKI_CLAUDE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/chrysaki/claude.json}"
+account=""
+[ -f "$PERSONAL" ] && account=$(jq -r --arg o "$owner" '.githubAccounts[$o] // empty' "$PERSONAL" 2>/dev/null)
+if [ -n "$account" ]; then
+  GH_TOKEN=$(gh auth token --user "$account" 2>/dev/null)
+  [ -z "$GH_TOKEN" ] && exit 0
+  export GH_TOKEN
+fi
 
 issue_count=$(gh issue list --repo "$repo_path" --state open --json number 2>/dev/null | jq length 2>/dev/null)
 

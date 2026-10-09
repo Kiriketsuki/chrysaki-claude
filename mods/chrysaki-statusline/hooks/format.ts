@@ -189,12 +189,12 @@ export function repoPathFromRemote(url: string): string {
   return m?.[1] ?? ''
 }
 
-// The vault inbox: "- " lines under "## Ramblings" in the Scratch Book.
-export function inboxDepth(scratch: string): number {
+// The inbox depth: "- " lines under the "## <heading>" section of a notes file.
+export function inboxDepth(scratch: string, heading: string): number {
   let isInside = false
   let count = 0
   for (const line of scratch.split('\n')) {
-    if (/^## Ramblings/.test(line)) isInside = true
+    if (line.trim() === `## ${heading}`) isInside = true
     else if (/^## /.test(line)) isInside = false
     else if (isInside && /^- /.test(line)) count += 1
   }

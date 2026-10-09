@@ -166,6 +166,20 @@ export type CacheView = { label: string; tone: CacheTone }
 export type CacheAlert = { warnedFor?: number; coldFor?: number }
 
 // A Claude account and the Firefox user profile signed in to it.
+// The personal config from ~/.config/chrysaki/claude.json. See hooks/personal.ts.
+export type PersonalConfig = {
+  // The accounts the switcher starts from, before the person saves a list.
+  accounts: StatuslineAccount[]
+  // Each account's share partner, by email, lower case.
+  sharePartners: Record<string, string>
+  // The Claude config folder for a cwd that contains `match`.
+  configDirs: { match: string; dir: string; isWork: boolean }[]
+  // The gh account to use for each GitHub owner.
+  githubAccounts: Record<string, string>
+  // A notes file under the cwd whose list under `## heading` counts as the inbox.
+  inbox: { file: string; heading: string } | null
+}
+
 export type StatuslineAccount = {
   email: string
   // The profile's name in the Firefox profile switcher.
@@ -216,6 +230,8 @@ declare module 'claude-code' {
       login: PendingLogin | null
       // True while the hint drawer under the prompt is open.
       hintOpen: boolean
+      // The personal config, read once a session.
+      personal: PersonalConfig
       // True while the crest is open beside the header.
       crestOpen: boolean
       limitsFetch: LimitsFetch

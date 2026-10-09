@@ -71,7 +71,8 @@ describe('formats', () => {
     expect(parseStatus(status)).toEqual({
       branch: 'main', hash: '9f25299', ahead: 2, behind: 0, staged: 2, unstaged: 2, untracked: 1, upstream: 'origin/main',
     })
-    expect(inboxDepth('# Scratch\n## Ramblings\n- a\n- b\n## Done\n- c')).toBe(2)
+    expect(inboxDepth('# Scratch\n## Ramblings\n- a\n- b\n## Done\n- c', 'Ramblings')).toBe(2)
+    expect(inboxDepth('## Inbox\n- a\n## Ramblings\n- b', 'Inbox')).toBe(1)
   })
 
   test('zigzag-alt edges and base64', async () => {

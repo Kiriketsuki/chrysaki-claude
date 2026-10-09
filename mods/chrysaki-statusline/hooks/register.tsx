@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn, BandEntry } from '../types'
-import { ACCOUNTS_KEY, NEW_PROFILE, SEED_ACCOUNTS, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
+import type { AccountMenu, CacheAlert, LimitsFetch, CacheView, FirefoxProfile, PendingHandoff, PendingLogin, ShareOffer, StatuslineAccount, StatuslineCache, StatuslineLag, StatuslineGit, StatuslineIdentity, StatuslineOutage, StatuslineRemote, StatuslineUsage, StatuslineWarn, BandEntry, PersonalConfig } from '../types'
+import { ACCOUNTS_KEY, NEW_PROFILE, guessWork, isEmail, parseAccounts, parseProfiles, resolvePaths, upsertAccount } from './accounts'
 import { cacheView, inferTtl, inferredCache, leadSeconds, nextAlert, readCacheFile } from './cache'
 import type { AlertAction, CacheFileHost } from './cache'
 import { mergeIdentity, readGit, readIdentity, readInbox, readRemote, usageFrom, usageFromMeasure } from './collect'
@@ -24,6 +24,7 @@ import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
 import { BAND_DIR, BAND_TICK_MS, collectBand } from './band'
 import { EMPTY_HISTORY, addSample, addTokens, historyKey, parseHistory } from './history'
 import type { UsageHistory } from './history'
+import { EMPTY_PERSONAL, parsePersonal, personalPath } from './personal'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
 
 export { HANDOFF_FILE }
@@ -45,6 +46,7 @@ const profiles = atom({ plugin: 'chrysaki-statusline', key: 'profiles' } as cons
 const accountMenu = atom({ plugin: 'chrysaki-statusline', key: 'accountMenu' } as const, null as AccountMenu | null)
 const login = atom({ plugin: 'chrysaki-statusline', key: 'login' } as const, null as PendingLogin | null)
 const hintOpen = atom({ plugin: 'chrysaki-statusline', key: 'hintOpen' } as const, false)
+const personal = atom({ plugin: 'chrysaki-statusline', key: 'personal' } as const, EMPTY_PERSONAL as PersonalConfig)
 // The crest starts folded. A wide band spends two rows on it while open.
 const crestOpen = atom({ plugin: 'chrysaki-statusline', key: 'crestOpen' } as const, false)
 const limitsFetch = atom({ plugin: 'chrysaki-statusline', key: 'limitsFetch' } as const, { isBusy: false } as LimitsFetch)
@@ -100,11 +102,12 @@ let lastIdentity: StatuslineIdentity | null = null
 
 async function refreshLocal($: EngineInterface): Promise<void> {
   const host = hostOf($)
-  const read_ = await readIdentity(host)
+  const mine = await read($, personal)
+  const read_ = await readIdentity(host, mine)
   const id = mergeIdentity(read_, (await read($, identity)) ?? lastIdentity)
   lastIdentity = id
   await update($, identity, () => id)
-  const [g, n] = await Promise.all([readGit(host, id.cwd), readInbox(host, id.cwd)])
+  const [g, n] = await Promise.all([readGit(host, id.cwd), readInbox(host, id.cwd, mine.inbox)])
   await update($, git, () => g)
   await update($, inbox, () => n)
 }
@@ -116,7 +119,7 @@ async function refreshRemote($: EngineInterface, isForced: boolean): Promise<voi
   const now = await $.clock.now()
   const last = await read($, remote)
   if (!isForced && last !== null && now - last.fetchedAt < REMOTE_MAX_AGE_MS) return
-  const r = await readRemote(hostOf($), g, id.cwd, now)
+  const r = await readRemote(hostOf($), g, id.cwd, now, (await read($, personal)).githubAccounts)
   await update($, remote, () => r)
 }
 
@@ -339,6 +342,16 @@ function handoffHostOf($: EngineInterface): HandoffHost {
   }
 }
 
+// --- Personal config -------------------------------------------------------------
+
+// Reads the personal config. A missing or broken file leaves the empty one.
+async function loadPersonal($: EngineInterface): Promise<void> {
+  const [override, xdg, home] = await Promise.all([$.env.get('CHRYSAKI_CLAUDE_CONFIG'), $.env.get('XDG_CONFIG_HOME'), $.env.get('HOME')])
+  const path = personalPath(override, xdg, home ?? '')
+  const text = await $.fs.read(path).catch(() => null)
+  await update($, personal, () => parsePersonal(typeof text === 'string' ? text : null, home ?? ''))
+}
+
 // --- Account switcher -----------------------------------------------------------
 
 function message(error: unknown): string {
@@ -347,7 +360,7 @@ function message(error: unknown): string {
 
 async function loadAccounts($: EngineInterface): Promise<void> {
   const raw = await $.store.get(ACCOUNTS_KEY).catch(() => undefined)
-  const list = parseAccounts(raw) ?? [...SEED_ACCOUNTS]
+  const list = parseAccounts(raw) ?? [...(await read($, personal)).accounts]
   await update($, accounts, () => list)
 }
 
@@ -489,7 +502,7 @@ async function offerShare($: EngineInterface, url: string): Promise<void> {
   const offered = parseOffered(raw)
   // The paths fill in when the account dropdown opens. A list with a gap reads the profiles now.
   const known = list.every(a => a.path !== '') ? list : resolvePaths(list, await readProfiles($).catch(() => []))
-  const offer = offerFor(url, id?.email ?? '', known, offered, now)
+  const offer = offerFor(url, id?.email ?? '', known, offered, now, (await read($, personal)).sharePartners)
   if (offer === null) return
   await update($, shareOffer, () => offer)
   await $.store.set(OFFERED_KEY, withOffered(offered, url)).catch(error => logFailure($, error))
@@ -636,11 +649,14 @@ async function sweepRules($: EngineInterface, rt: Runtime): Promise<void> {
 // of the last run and returns the new ones, so a reseed never doubles them.
 function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[] {
   for (const t of old) t.cancel()
-  $.clock.after(0, () => { void loadAccounts($).catch(error => logFailure($, error)) })
+  // The personal config comes first: the accounts, the identity and git read it.
+  const personalReady = loadPersonal($).catch(error => logFailure($, error))
+  $.clock.after(0, () => { void personalReady.then(() => loadAccounts($)).catch(error => logFailure($, error)) })
   $.clock.after(0, () => { void loadHintOpen($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => { void loadCrestOpen($).catch(error => logFailure($, error)) })
   $.clock.after(0, () => {
-    void refreshFast($)
+    void personalReady
+      .then(() => refreshFast($))
       .then(() => loadHistory($))
       .then(() => seedUsage($))
       .then(() => refreshLimits($, false))
