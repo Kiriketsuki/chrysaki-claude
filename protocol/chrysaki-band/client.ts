@@ -3,26 +3,38 @@
 // chrysaki-statusline. Without that mod, the client writes the file and
 // nothing reads it.
 //
-//   import { publishBand } from './chrysaki-band/client'
-//   await publishBand($, 'tokin', [{ id: 'era', icon: '*', text: 'era 1', tone: 'accent', command: 'tokin' }])
+// The validator follows `$` only in the module that registers the hooks, so
+// this file never touches `$`. The mod builds a BandHost from `$` in its
+// register module and passes it in. README.md beside this file shows how.
 //
-// Publish again before ttlMs runs out, for example on a clock, or the items
-// leave the band. Publish an empty list to clear them at once.
-
-import type { EngineInterface } from 'claude-code'
+// Publish again before ttlMs runs out, or the items leave the band. Publish
+// an empty list to clear them at once.
 
 import type { BandFile, BandItem } from './band'
 
 export const BAND_DIR_NAME = 'chrysaki-band'
 
-export async function bandDir($: EngineInterface): Promise<string> {
-  const runtime = await $.env.get('XDG_RUNTIME_DIR')
-  return `${runtime ?? '/tmp'}/${BAND_DIR_NAME}`
+// What the client needs from the engine, built from `$` by the mod.
+export type BandHost = {
+  runtimeDir: () => Promise<string>
+  now: () => Promise<number>
+  write: (path: string, text: string) => Promise<void>
+  run: (argv: string[]) => Promise<void>
 }
 
-export async function publishBand($: EngineInterface, source: string, items: BandItem[], ttlMs = 30000): Promise<void> {
-  const dir = await bandDir($)
-  const file: BandFile = { v: 1, source, updatedAt: await $.clock.now(), ttlMs, items }
-  if (!(await $.fs.exists(dir))) await $.process.run(['mkdir', '-p', dir], { timeoutMs: 5000 })
-  await $.fs.write(`${dir}/${source}.json`, JSON.stringify(file))
+// The file's text. Pure, so a mod can test what it publishes.
+export function bandText(source: string, items: BandItem[], now: number, ttlMs = 30000): string {
+  const file: BandFile = { v: 1, source, updatedAt: now, ttlMs, items }
+  return JSON.stringify(file)
+}
+
+// Writes the file atomically: a temporary file, then a rename. The
+// statusline lists only names that end in `.json`, so it never reads the
+// temporary file, and it never reads half a file.
+export async function publishBand(host: BandHost, source: string, items: BandItem[], ttlMs = 30000): Promise<void> {
+  const dir = `${await host.runtimeDir()}/${BAND_DIR_NAME}`
+  const path = `${dir}/${source}.json`
+  await host.run(['mkdir', '-p', dir])
+  await host.write(`${path}.tmp`, bandText(source, items, await host.now(), ttlMs))
+  await host.run(['mv', '-f', `${path}.tmp`, path])
 }

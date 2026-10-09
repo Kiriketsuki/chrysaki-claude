@@ -61,15 +61,25 @@ The statusline guards every ground and lettering pair to a contrast of 4.5:1.
 
 ## From a Claude Code mod
 
-Copy [`client.ts`](client.ts) and [`band.d.ts`](band.d.ts) into the mod, then publish on a clock:
+Copy [`client.ts`](client.ts) and [`band.d.ts`](band.d.ts) into the mod. The validator follows `$` only in the module that registers the hooks, so `client.ts` never touches `$`. Build a `BandHost` from `$` in the register module and pass it in:
 
 ```ts
 import { publishBand } from './chrysaki-band/client'
+import type { BandHost } from './chrysaki-band/client'
+
+const bandHost = ($: EngineInterface): BandHost => ({
+  runtimeDir: async () => (await $.env.get('XDG_RUNTIME_DIR')) ?? '/tmp',
+  now: async () => $.clock.now(),
+  write: async (path, text) => $.fs.write(path, text),
+  run: async argv => { await $.process.run(argv, { timeoutMs: 5000 }) },
+})
 
 $.clock.every(10000, () => {
-  void publishBand($, 'tokin', [{ id: 'era', icon: '⚙', text: 'era 1 · 12k/s', tone: 'accent', command: 'tokin' }])
+  void publishBand(bandHost($), 'tokin', [{ id: 'era', icon: '⚙', text: 'era 1 · 12k/s', tone: 'accent', command: 'tokin' }])
 })
 ```
+
+`publishBand` writes a temporary file, then renames it, so the statusline never reads half a file. `bandText` gives the file's text alone, for a test.
 
 ## From any process
 
