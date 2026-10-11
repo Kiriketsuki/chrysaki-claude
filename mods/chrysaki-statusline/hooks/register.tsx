@@ -12,7 +12,7 @@ import { bandStrips, drawBand } from './draw'
 import type { BandData, LiveStrip } from './draw'
 import { SWEEP_FRAMES, isRuleLive } from './ledger'
 import type { BarStyle } from './format'
-import { kilo } from './format'
+import { kilo, rowPxOption } from './format'
 import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from './limits'
 import { LIVE_MS, fetchLimits, fetchOutage } from './live'
 import type { LiveHost } from './live'
@@ -681,6 +681,7 @@ export const register: Register = (on, options) => {
   const isAnimated = String(options.animate ?? 'off') === 'on'
   const isRuleAnimated = String(options.ruleAnimation ?? 'on') === 'on'
   const usdToSgd = Number(options.usdToSgd ?? '1.35') || 1.35
+  const rowPx = rowPxOption(options.desktopRowPx)
   // Set when the model pushes or calls gh. The next slow refresh then skips
   // the five-minute cache. A reload clears it, which costs one late update.
   let isRemoteDue = false
@@ -815,8 +816,10 @@ export const register: Register = (on, options) => {
   // The hint text under the prompt as a drawer. The chevron left of the band
   // header opens and closes it. Closed, the hint draws nothing. The engine
   // draws the mode label before it, outside any mod hook, so that label stays.
+  // The desktop header has no chevron, so nothing there could reopen a hidden
+  // hint. The desktop always passes the hint through.
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    if (await read($, hintOpen)) return next(e)
+    if (e.surface === 'desktop' || await read($, hintOpen)) return next(e)
     const { Text } = $.ui.resolve(e)
     return <Text />
   })
@@ -864,7 +867,7 @@ export const register: Register = (on, options) => {
       band: contributed,
       onBand: entry => { void pressBand($, entry) },
       history: hist, ctxHistory: ctxHist,
-      columns: e.props.bodyColumns, emblem, caption, surface: e.surface, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
+      columns: e.props.bodyColumns, emblem, caption, surface: e.surface, rowPx, barStyle, isRuleAnimated, sweep: sweepFrame, usdToSgd,
       onContext: () => { void toastBreakdown($) },
       cache: c, cacheView: cv, hasGitCommand: hasGit,
       onGit: () => { void openGitPane($) },

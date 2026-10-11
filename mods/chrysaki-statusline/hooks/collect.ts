@@ -83,10 +83,13 @@ export async function readIdentity(host: Host): Promise<StatuslineIdentity> {
     host.home(),
     host.configDir(),
   ])
-  const dir = configDir ?? (cwd.includes('/workdev/Aurrigo') ? `${home}/.claude-aurrigo` : `${home}/.claude`)
-  const isWorkAccount = dir.endsWith('/.claude-aurrigo')
+  // Windows paths use a backslash, so every test reads a copy with slashes.
+  const slashed = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '')
+  const root = slashed(home ?? '')
+  const dir = configDir ?? (slashed(cwd).includes('/workdev/Aurrigo') ? `${root}/.claude-aurrigo` : `${root}/.claude`)
+  const isWorkAccount = slashed(dir).endsWith('/.claude-aurrigo')
   // The personal account keeps .claude.json at HOME. Others keep it in the config dir.
-  const credsPath = dir.endsWith('/.claude') ? `${home}/.claude.json` : `${dir}/.claude.json`
+  const credsPath = slashed(dir).endsWith('/.claude') ? `${root}/.claude.json` : `${dir}/.claude.json`
   let email = 'unknown'
   try {
     const creds = JSON.parse(await host.readFile(credsPath)) as { oauthAccount?: { emailAddress?: string } }
