@@ -63,6 +63,12 @@
         "off"
       ]
     },
+    "desktopRowPx": {
+      "type": "string",
+      "title": "Desktop row height",
+      "description": "CSS pixels of one band line on the desktop: 19 in compact density, 20 in comfortable.",
+      "default": "20"
+    },
     "usdToSgd": {
       "type": "string",
       "title": "USD to SGD rate",
