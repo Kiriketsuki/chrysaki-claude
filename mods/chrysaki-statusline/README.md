@@ -41,7 +41,7 @@ Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.jso
 
 ## Band protocol
 
-Other mods and processes add segments to the header through the band protocol. A contributor writes `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`, and the mod lists that folder every 3 seconds. Each fresh item draws as a header segment in the tone it asks for. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
+Other mods and processes add segments to the header through the band protocol. A contributor writes `<band folder>/<source>.json`, and the mod lists that folder every 3 seconds. The band folder is `$CHRYSAKI_BAND_DIR`, or `chrysaki-band` under the first of `XDG_RUNTIME_DIR`, `TMPDIR`, `TEMP` and `TMP` that is set. The rule works on Linux, macOS and Windows. Each fresh item draws as a header segment in the tone it asks for. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
 
 ## codeKs
 
