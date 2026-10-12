@@ -51,7 +51,7 @@ The engine pushes rate limits from API response headers after each turn. The mod
 
 ## Outage badge
 
-Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.json`. While an incident is open, the header shows `o: ⚠ <impact>`. The badge is Blonde for a minor incident and Error for a major one. `+N` counts the other open incidents. Press `ctrl+x tab`, then `o`, or click the badge to open the status page.
+Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.json`. It counts an open incident only when the incident names Claude Code or the Claude API, or names no component. An incident on the Console or claude.ai alone shows no badge. While a counted incident is open, the header shows `o: ⚠ <impact>`. An incident under watch after a fix reads one level lower, so a major one reads minor. The badge is Blonde for a minor incident and Error for a major one. `+N` counts the other counted incidents. The hover card names the components of the top incident. Press `ctrl+x tab`, then `o`, or click the badge to open the status page.
 
 ## Band protocol
 
