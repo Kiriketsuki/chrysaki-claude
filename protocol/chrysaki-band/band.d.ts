@@ -1,8 +1,11 @@
 // Chrysaki band protocol, version 1: the file a contributor writes.
 //
-// A contributor writes one JSON file, `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`.
-// The chrysaki-statusline mod lists that folder every few seconds and draws
-// the items as segments of the band header. See README.md beside this file.
+// A contributor writes one JSON file, `<band folder>/<source>.json`. The
+// band folder is `$CHRYSAKI_BAND_DIR` when that is set. Otherwise it is
+// `chrysaki-band` under the first of XDG_RUNTIME_DIR, TMPDIR, TEMP and TMP
+// that is set, else under `/tmp`. The chrysaki-statusline mod lists that
+// folder every few seconds and draws the items as segments of the band
+// header. See README.md beside this file.
 
 // How an item reads. The statusline picks the ground and the lettering.
 // It holds the pair to a contrast of at least 4.5 to 1.
@@ -53,4 +56,9 @@ export type BandFile = {
   ttlMs?: number
   // At most 4 items. An empty list clears the source.
   items: BandItem[]
+}
+
+// The variables of the band folder rule. An empty value counts as unset.
+export type BandEnv = {
+  [K in 'CHRYSAKI_BAND_DIR' | 'XDG_RUNTIME_DIR' | 'TMPDIR' | 'TEMP' | 'TMP']?: string | undefined
 }

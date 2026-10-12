@@ -21,7 +21,8 @@ import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff }
 import type { HandoffHost } from './handoff'
 import { HANDOFF_FILE } from './resume'
 import { LAG_FILE, lagFrom, warnFrom } from './lagfile'
-import { BAND_DIR, BAND_TICK_MS, collectBand } from './band'
+import { BAND_TICK_MS, bandDir, joinPath, readBand } from './band'
+import type { BandEnv, BandHeld } from './band'
 import { EMPTY_HISTORY, addSample, addTokens, historyKey, parseHistory } from './history'
 import type { UsageHistory } from './history'
 import { OFFERED_KEY, artifactUrlFrom, isNewPublish, liveOffer, offerFor, parseOffered, withOffered } from './share'
@@ -526,18 +527,34 @@ async function openLag($: EngineInterface, l: StatuslineLag | null): Promise<voi
 
 // --- Band protocol ---------------------------------------------------------------
 
+// The last good read of each band source. A torn read keeps these items.
+let bandHeld: BandHeld = new Map()
+
+// The variables of the band folder rule. $.env.get takes literal names only.
+async function bandEnv($: EngineInterface): Promise<BandEnv> {
+  const [CHRYSAKI_BAND_DIR, XDG_RUNTIME_DIR, TMPDIR, TEMP, TMP] = await Promise.all([
+    $.env.get('CHRYSAKI_BAND_DIR'),
+    $.env.get('XDG_RUNTIME_DIR'),
+    $.env.get('TMPDIR'),
+    $.env.get('TEMP'),
+    $.env.get('TMP'),
+  ])
+  return { CHRYSAKI_BAND_DIR, XDG_RUNTIME_DIR, TMPDIR, TEMP, TMP }
+}
+
 // Lists the band folder and keeps the fresh items of every contributor. A
 // missing folder means no contributor, which is the common case.
 async function refreshBand($: EngineInterface): Promise<void> {
-  const [runtime, now] = await Promise.all([$.env.get('XDG_RUNTIME_DIR'), $.clock.now()])
-  const dir = `${runtime ?? '/tmp'}/${BAND_DIR}`
+  const [env, now] = await Promise.all([bandEnv($), $.clock.now()])
+  const dir = bandDir(env)
   const entries = await $.fs.list(dir).catch(() => [])
   const names = entries.filter(e => e.kind === 'file' && e.name.endsWith('.json')).map(e => e.name.slice(0, -5))
   const files = await Promise.all(names.map(async name => {
-    const text = await $.fs.read(`${dir}/${name}.json`).catch(() => null)
-    return typeof text === 'string' ? [{ name, text }] : []
+    const text = await $.fs.read(joinPath(dir, `${name}.json`)).catch(() => null)
+    return { name, text: typeof text === 'string' ? text : null }
   }))
-  const next = collectBand(files.flat(), now)
+  const { entries: next, held } = readBand(files, now, bandHeld)
+  bandHeld = held
   if (JSON.stringify(next) !== JSON.stringify(await read($, bandItems))) await update($, bandItems, () => next)
 }
 
