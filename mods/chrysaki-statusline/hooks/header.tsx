@@ -18,7 +18,7 @@ import { deskGround } from './ground'
 import { CORE, ROLE } from './palette'
 import { hoverGroup } from './prims'
 import type { Prims, Seg, Table } from './prims'
-import { primsFor } from './prims-for'
+import { isDesktop, primsFor } from './prims-for'
 import { BRAND_INK } from './rules'
 
 // Each segment takes its text plus three cells: two of padding, one edge.
@@ -61,9 +61,9 @@ function mirrored(P: Prims, segs: readonly Seg[]): RenderElement[] {
 // and no text ever sits on a Blonde fill.
 export const AMBER_GROUND = mixHex(CORE.blonde, CORE.abyss, 0.8)
 
-// A contributed item as a header segment. The tone picks the ground and the
-// lettering, and the guard in headerSegs holds both to 4.5:1. Warn and alert
-// never drop. The rest drop with the session clock.
+// A contributed item as a segment. The tone picks the ground and the
+// lettering, and guardSeg holds both to 4.5:1. Warn and alert never drop
+// from the desktop header. The rest drop with the session clock.
 function bandSeg(d: BandData, e: BandEntry): Seg {
   const label = `${iconFor(e.icon, d.surface)} ${e.text}`
   const look: Record<BandTone, Pick<Seg, 'bg' | 'fg' | 'bold' | 'ink'>> = {
@@ -80,6 +80,36 @@ function bandSeg(d: BandData, e: BandEntry): Seg {
     ...(e.command === undefined ? {} : { press: { key: `band-${e.source}-${e.id}`, label, ...(e.hotkey === undefined ? {} : { hotkey: e.hotkey }), onPress: () => d.onBand(e) } }),
     ...(isUrgent ? {} : { drop: 2 }),
   }
+}
+
+// Every ground gives its lettering at least 4.5:1. The desktop lifts a
+// ground that is too dark for its card and lifts the lettering to match.
+function guardSeg(s: Seg, isDesk: boolean): Seg {
+  const lifted = isDesk ? deskGround(s.bg) : s.bg
+  if (lifted !== s.bg) return { ...s, bg: lifted, fg: readableInk(s.fg, lifted) }
+  return { ...s, bg: readableGround(s.bg, s.fg) }
+}
+
+// The row of items other mods contribute through the band protocol, under
+// the terminal header. Each item is a segment in its tone, with the guard
+// of the header. Hexagon caps close each one, as the ledger badges do. Null
+// while no mod contributes. The desktop keeps the items in its header.
+export function modRow(T: Table, d: BandData): RenderElement | null {
+  if (d.band.length === 0) return null
+  const { Box, Text } = T
+  const P = primsFor(T, d)
+  const isDesk = isDesktop(T, d)
+  const hasCaps = d.surface === 'terminal'
+  const parts = d.band.flatMap(e => {
+    const s = guardSeg(bandSeg(d, e), isDesk)
+    return [
+      ...(hasCaps ? [<Text color={s.bg}>{'\ue0b2'}</Text>] : []),
+      P.segBody(s),
+      ...(hasCaps ? [<Text color={s.bg}>{'\ue0b0'}</Text>] : []),
+      <Text>{'  '}</Text>,
+    ]
+  })
+  return <Box key="mod-row" paddingLeft={1} overflow="hidden">{parts}</Box>
 }
 
 type Runs = { left: Seg[]; right: Seg[] }
@@ -166,7 +196,9 @@ export function headerSegs(d: BandData, isCompact: boolean, hasCrest: boolean, i
     bold: true,
     press: { key: 'warn', label: warnText, hotkey: 'w', onPress: d.onLag },
   }]
-  const bandSegs = d.band.map(e => bandSeg(d, e))
+  // The terminal draws contributed items in the mod row under the header.
+  // The desktop keeps them in the header, inside its budget of lines.
+  const bandSegs = isDesk ? d.band.map(e => bandSeg(d, e)) : []
   const right: Seg[] = [
     ...lagSeg,
     ...warnSeg,
@@ -178,11 +210,7 @@ export function headerSegs(d: BandData, isCompact: boolean, hasCrest: boolean, i
     ...(d.inbox > 0 ? [{ text: `✉ ${d.inbox}`, bg: AMBER_GROUND, fg: ROLE.blondeLt, bold: true }] : []),
     ...(email && !isCompact ? [accountSeg] : []),
   ]
-  const guard = (s: Seg): Seg => {
-    const lifted = isDesk ? deskGround(s.bg) : s.bg
-    if (lifted !== s.bg) return { ...s, bg: lifted, fg: readableInk(s.fg, lifted) }
-    return { ...s, bg: readableGround(s.bg, s.fg) }
-  }
+  const guard = (s: Seg): Seg => guardSeg(s, isDesk)
   return { left: left.map(guard), right: right.map(guard) }
 }
 

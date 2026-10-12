@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { parseStatus, readIdentity } from '../hooks/collect'
+import { parsePersonal } from '../hooks/personal'
 import type { Host } from '../hooks/collect'
 import {
   barCells, capPath, ctxColor, ctxMarker, fiveHourColor, inboxDepth, isHandoffDue, marker, modelLabel,
@@ -81,7 +82,8 @@ describe('formats', () => {
     expect(parseStatus(status)).toEqual({
       branch: 'main', hash: '9f25299', ahead: 2, behind: 0, staged: 2, unstaged: 2, untracked: 1, upstream: 'origin/main',
     })
-    expect(inboxDepth('# Scratch\n## Ramblings\n- a\n- b\n## Done\n- c')).toBe(2)
+    expect(inboxDepth('# Scratch\n## Ramblings\n- a\n- b\n## Done\n- c', 'Ramblings')).toBe(2)
+    expect(inboxDepth('## Inbox\n- a\n## Ramblings\n- b', 'Inbox')).toBe(1)
   })
 
   test('zigzag-alt edges and base64', async () => {
@@ -93,6 +95,7 @@ describe('formats', () => {
 
 describe('the account email on Windows paths', () => {
   const HOME = 'C:\\Users\\Kidriel'
+  const PERSONAL = parsePersonal(JSON.stringify({ configDirs: [{ match: '/workdev/Aurrigo', dir: '~/.claude-aurrigo', isWork: true }] }), HOME)
   // A host that answers the reads of one machine and records the file it opened.
   function host(over: Partial<Host>, files: Record<string, string>): { host: Host; opened: string[] } {
     const opened: string[] = []
@@ -118,7 +121,7 @@ describe('the account email on Windows paths', () => {
 
   test('a config dir that ends in a backslash .claude reads the .claude.json at HOME', async () => {
     const { host: h, opened } = host({}, { 'C:/Users/Kidriel/.claude.json': mail('kiriketsuki@gmail.com') })
-    const id = await readIdentity(h)
+    const id = await readIdentity(h, PERSONAL)
     expect(id.email).toBe('kiriketsuki@gmail.com')
     expect(id.isWorkAccount).toBe(false)
     expect(opened).toEqual(['C:/Users/Kidriel/.claude.json'])
@@ -126,14 +129,14 @@ describe('the account email on Windows paths', () => {
 
   test('a work config dir reads its own .claude.json and marks the work account', async () => {
     const { host: h } = host({ configDir: async () => `${HOME}\\.claude-aurrigo` }, { 'C:/Users/Kidriel/.claude-aurrigo/.claude.json': mail('limj@aurrigo.com') })
-    const id = await readIdentity(h)
+    const id = await readIdentity(h, PERSONAL)
     expect(id.email).toBe('limj@aurrigo.com')
     expect(id.isWorkAccount).toBe(true)
   })
 
   test('with no config dir a cwd under workdev Aurrigo picks the work config', async () => {
     const { host: h, opened } = host({ configDir: async () => undefined, cwd: async () => 'C:\\Users\\Kidriel\\workdev\\Aurrigo\\act' }, {})
-    const id = await readIdentity(h)
+    const id = await readIdentity(h, PERSONAL)
     expect(id.isWorkAccount).toBe(true)
     expect(id.email).toBe('unknown')
     expect(opened).toEqual(['C:/Users/Kidriel/.claude-aurrigo/.claude.json'])

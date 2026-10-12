@@ -149,9 +149,11 @@ describe('the desktop band keeps the terminal layout', () => {
       expect(segments.length).toBeGreaterThan(3)
       expect(edges.length).toBe(segments.length)
     }
+    // The terminal draws contributed items in a row of their own, so the two
+    // headers compare with none.
     for (const columns of [160, 238]) {
-      const glyphs = all(byKey(terminal(columns), 'header') as Node, n => n.type === 'Text' && /^[\ue0b0-\ue0bf]$/.test(text(n)))
-      const edges = all(byKey(desktop(columns), 'header') as Node, n => n.type === 'Svg' && n.props.alt === 'edge')
+      const glyphs = all(byKey(terminal(columns, { band: [] }), 'header') as Node, n => n.type === 'Text' && /^[\ue0b0-\ue0bf]$/.test(text(n)))
+      const edges = all(byKey(desktop(columns, { band: [] }), 'header') as Node, n => n.type === 'Svg' && n.props.alt === 'edge')
       expect(edges.length).toBe(glyphs.length)
       glyphs.forEach((g, i) => {
         const source = String(edges[i]?.props.source)

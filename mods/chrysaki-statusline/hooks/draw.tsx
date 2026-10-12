@@ -15,7 +15,7 @@ import type { UsageHistory } from './history'
 import { accountRows } from './dropdown'
 import { CREST_COLUMNS, bandEmblem, captionRow, crestFolded, crestWidth, emblemColumn } from './crest'
 import { drawDesktopBand } from './desktop-band'
-import { AMBER_GROUND, fitSegs, header, headerPlan } from './header'
+import { AMBER_GROUND, fitSegs, header, headerPlan, modRow } from './header'
 import { ledgerRows, ledgerRules } from './ledger'
 import { packCells, paintCells } from './raster'
 import { ROLE } from './palette'
@@ -102,9 +102,6 @@ export type BandData = {
 // Below this width the terminal band folds to the header and one line. The
 // desktop never folds.
 export const NARROW_COLUMNS = 100
-// At this width and up, a row parts the header from the ledger. It holds the
-// caption beside the crest, or the account dropdown.
-const SPACER_COLUMNS = CREST_COLUMNS
 // The engine draws its collapse mark `[-]` over the last cells of the band's
 // first row. That row is the blank top margin, so the header runs full width.
 const RESERVE = 0
@@ -150,23 +147,24 @@ export function drawBand(T: Table, d: BandData): RenderElement {
   // The desktop draws its own tiers and never folds. See desktop-band.tsx.
   if (isDesktop(T, d)) return drawDesktopBand(T, d)
   const inner = Math.max(20, d.columns - RESERVE)
+  const mods = modRow(T, d)
   if (d.columns < NARROW_COLUMNS) {
-    const lines = [header(T, d, inner, true), compactLine(T, d)]
+    const lines = [header(T, d, inner, true), mods, compactLine(T, d)]
     return <Box flexDirection="column" marginTop={1}>{lines.filter((l): l is RenderElement => l !== null)}</Box>
   }
-  // One empty row parts the band from the transcript above it. The drawer
-  // slot under the header holds the account dropdown, or stays empty as a
-  // spacer on a wide band.
+  // One empty row parts the band from the transcript above it. Under the
+  // header come the account dropdown while it is open, the mod row, then one
+  // empty row before the ledger, as the empty row above the prompt.
   const menu = accountRows(T, d)
+  const spacer = <Box key="spacer" height={1} />
+  const middle = [...(mods === null ? [] : [mods]), spacer]
   const emblem = bandEmblem(d)
   if (emblem !== null) {
     // The crest: the mark beside the header and the row under it. That row
     // holds the caption, or the account dropdown while it is open.
     const side = [header(T, d, inner - crestWidth(d), false, true), ...(menu.length > 0 ? menu : [captionRow(T, d)])]
     const crest = <Box key="crest">{emblemColumn(T, emblem)}<Box flexDirection="column" flexGrow={1}>{side}</Box></Box>
-    return <Box flexDirection="column" marginTop={1}>{[crest, ...ledgerRows(T, d, inner)]}</Box>
+    return <Box flexDirection="column" marginTop={1}>{[crest, ...middle, ...ledgerRows(T, d, inner)]}</Box>
   }
-  // A folded crest gives its row back, so the band stays compact.
-  const slot = menu.length > 0 ? menu : d.columns >= SPACER_COLUMNS && !crestFolded(d) ? [<Box key="drawer" height={1} />] : []
-  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...slot, ...ledgerRows(T, d, inner)]}</Box>
+  return <Box flexDirection="column" marginTop={1}>{[header(T, d, inner, false), ...menu, ...middle, ...ledgerRows(T, d, inner)]}</Box>
 }
