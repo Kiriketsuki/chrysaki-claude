@@ -4,6 +4,18 @@
 import { mixHex } from './gradient'
 import { CORE, ROLE } from './palette'
 
+// The height of one desktop band line in CSS pixels, from the user option. The
+// code font's line height is not readable from a hook, so the person sets it.
+export const DEFAULT_ROW_PX = 20
+const MIN_ROW_PX = 12
+const MAX_ROW_PX = 48
+
+export function rowPxOption(value: unknown): number {
+  const n = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(n)) return DEFAULT_ROW_PX
+  return Math.max(MIN_ROW_PX, Math.min(MAX_ROW_PX, n))
+}
+
 export type BarStyle = 'smooth' | 'line' | 'wave' | 'hex' | 'diamond' | 'circle' | 'block'
 
 // 5h usage: Emerald Lt, Blonde from 50, Ruby from 75.
@@ -140,13 +152,29 @@ export function kilo(n: number): string {
 }
 
 // The smart CWD: parent/basename, or the basename alone under HOME or /.
+// A path with a backslash or a drive letter is a Windows path. It splits on
+// both separators, and its parent matches HOME without regard to separator,
+// case or a trailing slash. A POSIX path keeps the exact match it always had.
 export function smartCwd(dir: string, home: string): string {
-  const parts = dir.replace(/\/+$/, '').split('/')
+  const isWin = /\\|^[A-Za-z]:/.test(dir)
+  const parts = isWin ? dir.replace(/[\\/]+$/, '').split(/[\\/]/) : dir.replace(/\/+$/, '').split('/')
   const base = parts[parts.length - 1] ?? dir
   const parentPath = parts.slice(0, -1).join('/')
   const parent = parts[parts.length - 2] ?? ''
-  if (parentPath === home || parentPath === '' || parent === '' || parent === '.') return base
+  const homeKey = isWin ? home.replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase() : home
+  const parentKey = isWin ? parentPath.toLowerCase() : parentPath
+  if (parentKey === homeKey || parentPath === '' || parent === '' || parent === '.') return base
   return `${parent}/${base}`
+}
+
+// A shown path cut to `max` characters. The cut comes off the left and
+// leaves a leading ellipsis. The base name stays whole, so the shortest form
+// is the ellipsis, a slash and the base name.
+export function capPath(path: string, max: number): string {
+  if (path.length <= max) return path
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  const keep = Math.max(max - 1, base.length + 1)
+  return keep >= path.length ? path : `…${path.slice(path.length - keep)}`
 }
 
 // The model label, prefixed "Claude " as the bash script does. An id such as

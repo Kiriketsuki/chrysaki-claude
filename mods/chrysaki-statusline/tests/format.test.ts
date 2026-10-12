@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { parseStatus } from '../hooks/collect'
+import { parseStatus, readIdentity } from '../hooks/collect'
+import { parsePersonal } from '../hooks/personal'
+import type { Host } from '../hooks/collect'
 import {
-  barCells, ctxColor, ctxMarker, fiveHourColor, inboxDepth, isHandoffDue, marker, modelLabel,
+  barCells, capPath, ctxColor, ctxMarker, fiveHourColor, inboxDepth, isHandoffDue, marker, modelLabel,
   parseShortstat, repoPathFromRemote, rightEdge, sevenDayColor, smartCwd, untilReset,
 } from '../hooks/format'
 import { ROLE } from '../hooks/palette'
@@ -54,6 +56,15 @@ describe('formats', () => {
   test('cwd, model and remote', async () => {
     expect(smartCwd('/home/k/dots/chrysaki', '/home/k')).toBe('dots/chrysaki')
     expect(smartCwd('/home/k/dots', '/home/k')).toBe('dots')
+    expect(smartCwd('C:\\Users\\Kidriel\\dev\\obKidian', 'C:\\Users\\Kidriel')).toBe('dev/obKidian')
+    expect(smartCwd('C:\\Users\\Kidriel\\obKidian\\', 'c:/users/kidriel/')).toBe('obKidian')
+    expect(smartCwd('C:/Users/Kidriel/dev/obKidian', 'C:\\Users\\Kidriel')).toBe('dev/obKidian')
+    expect(capPath('dev/obKidian', 12)).toBe('dev/obKidian')
+    expect(capPath('dev/obKidian', 11)).toBe('…v/obKidian')
+    expect(capPath('Personal/dev/obKidian', 14)).toBe('…/dev/obKidian')
+    expect(capPath('dev/obKidian', 10)).toBe('…/obKidian')
+    expect(capPath('dev/obKidian', 3)).toBe('…/obKidian')
+    expect(capPath('obKidian', 3)).toBe('obKidian')
     expect(modelLabel('claude-opus-5-5')).toBe('Claude Opus 5.5')
     expect(modelLabel('Sonnet 4.6')).toBe('Claude Sonnet 4.6')
     expect(repoPathFromRemote('git@github.com:Kiriketsuki/chrysaki-claude.git')).toBe('Kiriketsuki/chrysaki-claude')
@@ -79,5 +90,55 @@ describe('formats', () => {
     expect([0, 1, 2, 3].map(i => rightEdge(i, 4))).toEqual(['', '', '', ''])
     expect(toBase64(new Uint8Array([77, 97, 110]))).toBe('TWFu')
     expect(toBase64(new Uint8Array([77]))).toBe('TQ==')
+  })
+})
+
+describe('the account email on Windows paths', () => {
+  const HOME = 'C:\\Users\\Kidriel'
+  const PERSONAL = parsePersonal(JSON.stringify({ configDirs: [{ match: '/workdev/Aurrigo', dir: '~/.claude-aurrigo', isWork: true }] }), HOME)
+  // A host that answers the reads of one machine and records the file it opened.
+  function host(over: Partial<Host>, files: Record<string, string>): { host: Host; opened: string[] } {
+    const opened: string[] = []
+    const base: Host = {
+      run: async () => ({ exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }),
+      readFile: async path => {
+        opened.push(path)
+        const text = files[path.replace(/\\/g, '/')]
+        if (text === undefined) throw new Error('missing')
+        return text
+      },
+      exists: async () => true,
+      model: async () => 'claude-opus-5-5',
+      version: async () => '2.1.295',
+      cwd: async () => 'C:\\Users\\Kidriel\\dev\\obKidian',
+      home: async () => HOME,
+      configDir: async () => `${HOME}\\.claude`,
+      ...over,
+    }
+    return { host: base, opened }
+  }
+  const mail = (emailAddress: string) => JSON.stringify({ oauthAccount: { emailAddress } })
+
+  test('a config dir that ends in a backslash .claude reads the .claude.json at HOME', async () => {
+    const { host: h, opened } = host({}, { 'C:/Users/Kidriel/.claude.json': mail('kiriketsuki@gmail.com') })
+    const id = await readIdentity(h, PERSONAL)
+    expect(id.email).toBe('kiriketsuki@gmail.com')
+    expect(id.isWorkAccount).toBe(false)
+    expect(opened).toEqual(['C:/Users/Kidriel/.claude.json'])
+  })
+
+  test('a work config dir reads its own .claude.json and marks the work account', async () => {
+    const { host: h } = host({ configDir: async () => `${HOME}\\.claude-aurrigo` }, { 'C:/Users/Kidriel/.claude-aurrigo/.claude.json': mail('limj@aurrigo.com') })
+    const id = await readIdentity(h, PERSONAL)
+    expect(id.email).toBe('limj@aurrigo.com')
+    expect(id.isWorkAccount).toBe(true)
+  })
+
+  test('with no config dir a cwd under workdev Aurrigo picks the work config', async () => {
+    const { host: h, opened } = host({ configDir: async () => undefined, cwd: async () => 'C:\\Users\\Kidriel\\workdev\\Aurrigo\\act' }, {})
+    const id = await readIdentity(h, PERSONAL)
+    expect(id.isWorkAccount).toBe(true)
+    expect(id.email).toBe('unknown')
+    expect(opened).toEqual(['C:/Users/Kidriel/.claude-aurrigo/.claude.json'])
   })
 })

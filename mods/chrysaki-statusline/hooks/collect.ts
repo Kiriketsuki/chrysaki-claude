@@ -6,7 +6,7 @@ import type { ProcessRunInit, ProcessRunResult, SessionMeasureInput, SessionUsag
 
 import type { StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage, StatuslineWindow, PersonalConfig } from '../types'
 import { inboxDepth, parseShortstat, repoPathFromRemote } from './format'
-import { configDirFor } from './personal'
+import { configDirFor, slashed } from './personal'
 
 // What the collectors need from the engine. register.tsx builds it from $,
 // because the engine allows $ only in functions of the hooks module itself.
@@ -86,7 +86,7 @@ export async function readIdentity(host: Host, personal: PersonalConfig): Promis
   ])
   const { dir, isWork: isWorkAccount } = configDirFor(personal, cwd, configDir, home ?? '')
   // The personal account keeps .claude.json at HOME. Others keep it in the config dir.
-  const credsPath = dir.endsWith('/.claude') ? `${home}/.claude.json` : `${dir}/.claude.json`
+  const credsPath = slashed(dir).endsWith('/.claude') ? `${slashed(home ?? '')}/.claude.json` : `${slashed(dir)}/.claude.json`
   let email = 'unknown'
   try {
     const creds = JSON.parse(await host.readFile(credsPath)) as { oauthAccount?: { emailAddress?: string } }

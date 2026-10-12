@@ -75,13 +75,18 @@ test('draws the four lines with the bash thresholds on every surface', async ($,
   }
 })
 
-test('folds to two lines on a narrow band', async ($, on) => {
+test('the terminal folds to two lines on a narrow band, the desktop does not', async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(80) })
-    expect(await ui.find({ type: 'Text', text: /5h 80%/ })).toBeDefined()
-    expect(await ui.find({ key: 'ctx-detail' })).toBeUndefined()
+    if (surface === 'terminal') {
+      expect(await ui.find({ type: 'Text', text: /5h 80%/ })).toBeDefined()
+      expect(await ui.find({ key: 'ctx-detail' })).toBeUndefined()
+    } else {
+      expect(await ui.find({ type: 'Text', text: /5h 80%/ })).toBeUndefined()
+      expect(await ui.find({ key: 'ctx-detail' })).toBeDefined()
+    }
   }
 })
 
@@ -157,7 +162,7 @@ test('the default line style draws its bars as rule glyphs', async ($, on) => {
 test('off the terminal a smooth bar draws as Text on the track', { options: { barStyle: 'smooth' } }, async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
-  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(200) })
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'vscode', component: 'AbovePrompt', props: props(200) })
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   // 80% of 16 cells is 12 full cells and 6 eighths.
   expect(await ui.find({ type: 'Text', text: /^█{12}▊ {3}$/ })).toBeDefined()
@@ -182,7 +187,9 @@ test('the header sets the model name in gem type on the Abyss', async ($, on) =>
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(200) })
     // Each letter is its own Text on the Abyss, coloured along the brand run.
-    const letters = (await ui.findAll({ type: 'Text', text: /^[A-Za-z0-9.]$/ })).filter(t => t.props.backgroundColor === '#0f1117')
+    // The desktop pill Box paints the ground, so its letters carry none.
+    const lettered = await ui.findAll({ type: 'Text', text: /^[A-Za-z0-9.]$/ })
+    const letters = lettered.filter(t => (surface === 'desktop' ? typeof t.props.color === 'string' : t.props.backgroundColor === '#0f1117'))
     expect(letters.length).toBeGreaterThan(5)
     expect(new Set(letters.map(t => t.props.color)).size).toBeGreaterThan(4)
     await ui.unmount()
@@ -377,7 +384,7 @@ test('the clock repaints the rule Raster without a redraw of the band', async ($
 test('off the terminal the animated rule draws a still gradient of Text', async ($, on) => {
   answerMeasure(on)
   await $.session.measure(MEASURE)
-  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'desktop', component: 'AbovePrompt', props: props(238) })
+  const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'vscode', component: 'AbovePrompt', props: props(238) })
   const colours = (await ui.findAll({ type: 'Text', text: /^──\s?$/ })).map(t => String(t.props.color))
   expect(colours.length).toBeGreaterThan(10)
   expect(new Set(colours).size).toBeGreaterThan(3)
@@ -402,7 +409,9 @@ test('no lettering in the band sits on a ground below 4.5:1', async ($, on) => {
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(238) })
     const filled = (await ui.findAll({ type: 'Text' })).filter(t => /[^\s\ue0b0-\ue0bf]/.test(t.text) && typeof t.props.backgroundColor === 'string' && typeof t.props.color === 'string' && String(t.props.color).startsWith('#'))
-    expect(filled.length).toBeGreaterThan(10)
+    // The desktop sets its lettering over a Box or a drawing, so no Text there
+    // carries a ground. The desktop pills are checked in desktop-tiers.test.ts.
+    if (surface !== 'desktop') expect(filled.length).toBeGreaterThan(5)
     const low = filled.filter(t => contrast(String(t.props.color), String(t.props.backgroundColor)) < 4.5).map(t => `${t.text} ${String(t.props.color)} on ${String(t.props.backgroundColor)}`)
     expect(low).toEqual([])
     await ui.unmount()

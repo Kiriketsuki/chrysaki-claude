@@ -60,11 +60,16 @@ export function parsePersonal(text: string | null, home: string): PersonalConfig
 
 // The Claude config folder for a session in `cwd`: CLAUDE_CONFIG_DIR when set,
 // else the first rule whose `match` appears in the cwd, else ~/.claude.
+// Windows paths use a backslash, so every match reads a copy with slashes.
+export function slashed(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
 export function configDirFor(p: PersonalConfig, cwd: string, envDir: string | undefined, home: string): { dir: string; isWork: boolean } {
   if (envDir !== undefined && envDir !== '') {
-    const rule = p.configDirs.find(r => r.dir === envDir)
+    const rule = p.configDirs.find(r => slashed(r.dir) === slashed(envDir))
     return { dir: envDir, isWork: rule?.isWork ?? false }
   }
-  const rule = p.configDirs.find(r => cwd.includes(r.match))
-  return rule === undefined ? { dir: `${home}/.claude`, isWork: false } : { dir: rule.dir, isWork: rule.isWork }
+  const rule = p.configDirs.find(r => slashed(cwd).includes(slashed(r.match)))
+  return rule === undefined ? { dir: `${slashed(home)}/.claude`, isWork: false } : { dir: rule.dir, isWork: rule.isWork }
 }
