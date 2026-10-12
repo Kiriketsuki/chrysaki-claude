@@ -1,0 +1,16 @@
+{
+  "accounts": [
+    { "email": "me@example.com", "profile": "default-release" },
+    { "email": "me@work.example", "profile": "Work", "isWork": true }
+  ],
+  "sharePartners": {
+    "me@work.example": "teammate@work.example"
+  },
+  "configDirs": [
+    { "match": "/work/", "dir": "~/.claude-work", "isWork": true }
+  ],
+  "githubAccounts": {
+    "my-work-org": "my-work-gh-user"
+  },
+  "inbox": { "file": "Inbox.md", "heading": "Inbox" }
+}
