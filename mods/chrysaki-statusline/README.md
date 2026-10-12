@@ -26,6 +26,20 @@ On the terminal, the band draws each smooth bar and each animated rule as a `Ras
 
 Other surfaces draw the same cells as runs of `Text`. There the rule keeps the frame of its last draw, and moves only when the band draws again.
 
+## Personal config
+
+Values that belong to one person live outside the mod, in `~/.config/chrysaki/claude.json`. Set `CHRYSAKI_CLAUDE_CONFIG` to read another path. [`personal.example.json`](personal.example.json) shows every field.
+
+| Field | What it feeds | Without it |
+|:---|:---|:---|
+| `accounts` | The account switcher's first list, before you save one | The list starts empty. Add accounts with `n: new account` |
+| `sharePartners` | The share key after a new artifact | No share offer |
+| `configDirs` | The Claude config folder for a cwd that contains `match`, and whether it is a work account | `CLAUDE_CONFIG_DIR`, else `~/.claude` |
+| `githubAccounts` | The gh account for each GitHub owner | gh uses its active login |
+| `inbox` | The inbox depth: the list under `## heading` in `file`, relative to the cwd | No inbox segment |
+
+The mod reads the file once a session. A field with a wrong shape drops alone, and the rest still reads.
+
 ## Rate limits
 
 The engine pushes rate limits from API response headers after each turn. The mod also reads `GET https://api.anthropic.com/api/oauth/usage` at startup and every 5 minutes, so the band shows usage from other sessions without a request. The mod signs the read through `$.session.authorize()` and never sees the token.
@@ -41,7 +55,7 @@ Every 5 minutes the mod reads `status.claude.com/api/v2/incidents/unresolved.jso
 
 ## Band protocol
 
-Other mods and processes add segments to the band through the band protocol. A contributor writes `$XDG_RUNTIME_DIR/chrysaki-band/<source>.json`, and the mod lists that folder every 3 seconds. Each fresh item draws as a segment in the tone it asks for, in the mod row under the header. One empty row follows, before the ledger. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
+Other mods and processes add segments to the band through the band protocol. A contributor writes `<band folder>/<source>.json`, and the mod lists that folder every 3 seconds. The band folder is `$CHRYSAKI_BAND_DIR`, or `chrysaki-band` under the first of `XDG_RUNTIME_DIR`, `TMPDIR`, `TEMP` and `TMP` that is set. The rule works on Linux, macOS and Windows. Each fresh item draws as a segment in the tone it asks for. On the terminal it sits in the mod row under the header, and one empty row follows before the ledger. The desktop draws it in the header. A press runs the item's slash command. The spec, the types and a client for mods are in [`protocol/chrysaki-band/`](../../protocol/chrysaki-band/).
 
 ## clodeKs
 
@@ -49,13 +63,13 @@ clodeKs connects Claude Code and the Codex CLI. It publishes its status through 
 
 ## Share key
 
-The two work accounts, jlim@aurrigo.com and limj@aurrigo.com, share each new artifact with each other. Neither the Artifact tool nor the plugin API can share an artifact, so the mod opens the page and the person shares it.
+An account with a share partner in the personal config shares each new artifact with that partner. Neither the Artifact tool nor the plugin API can share an artifact, so the mod opens the page and the person shares it.
 
 - After an Artifact publish that makes a new artifact, the header shows `p: ↗ share` on Teal. A desktop notice with an `Open to share` button appears too.
 - Press `ctrl+x tab`, then `p`, click the key, or click the notice. The artifact opens in the Firefox profile of the account that published it. Add the other account from the Share menu there.
 - The mod offers each artifact once. A republish or an update gives no new offer. The mod keeps the offered links in its plugin store under `shareOffered`.
 - The key and the notice leave after 30 minutes. The key also leaves after a press.
-- The account list of the account switcher names each profile. The pairs live in `SHARE_PARTNERS` in `hooks/share.ts`.
+- The account list of the account switcher names each profile. The pairs live in `sharePartners` in the personal config.
 
 ## /clear
 

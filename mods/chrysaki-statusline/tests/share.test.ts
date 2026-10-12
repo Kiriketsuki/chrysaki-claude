@@ -6,12 +6,14 @@ import { OFFER_WINDOW_MS, artifactUrlFrom, isNewPublish, liveOffer, offerFor, pa
 
 const RAN = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const NOW = Date.parse('2098-12-31T19:35:00Z')
+const PERSONAL = JSON.stringify({ accounts: [{ email: 'me@gmail.com', profile: 'Original profile' }, { email: 'ana@work.example', profile: 'Work Claude', isWork: true }, { email: 'ben@work.example', profile: 'Work Claude 2', isWork: true }], sharePartners: { 'ana@work.example': 'ben@work.example', 'ben@work.example': 'ana@work.example' } })
 const FF = '/home/k/.mozilla/firefox'
 const PROFILES = `Original profile\t${FF}/a.default-release\nWork Claude\t${FF}/b.Profile 6\nWork Claude 2\t${FF}/c.Profile 7\n`
 const URL = 'https://claude.ai/artifact/De1TRyedqoXdC6pQ5EfdNy'
+const PARTNERS = { 'ana@work.example': 'ben@work.example', 'ben@work.example': 'ana@work.example' }
 const ACCOUNTS = [
-  { email: 'jlim@aurrigo.com', profile: 'Work Claude', path: `${FF}/b.Profile 6`, isWork: true },
-  { email: 'limj@aurrigo.com', profile: 'Work Claude 2', path: `${FF}/c.Profile 7`, isWork: true },
+  { email: 'ana@work.example', profile: 'Work Claude', path: `${FF}/b.Profile 6`, isWork: true },
+  { email: 'ben@work.example', profile: 'Work Claude 2', path: `${FF}/c.Profile 7`, isWork: true },
 ]
 
 describe('the share model', () => {
@@ -30,10 +32,10 @@ describe('the share model', () => {
   })
 
   test('each work account offers the share to the other', async () => {
-    expect(offerFor(URL, 'JLim@aurrigo.com', ACCOUNTS, [], NOW)).toEqual({ url: URL, owner: 'jlim@aurrigo.com', partner: 'limj@aurrigo.com', path: `${FF}/b.Profile 6`, at: NOW })
-    expect(offerFor(URL, 'limj@aurrigo.com', ACCOUNTS, [], NOW)?.partner).toBe('jlim@aurrigo.com')
-    expect(offerFor(URL, 'kiriketsuki@gmail.com', ACCOUNTS, [], NOW)).toBe(null)
-    expect(offerFor(URL, 'jlim@aurrigo.com', ACCOUNTS, [URL], NOW)).toBe(null)
+    expect(offerFor(URL, 'Ana@work.example', ACCOUNTS, [], NOW, PARTNERS)).toEqual({ url: URL, owner: 'ana@work.example', partner: 'ben@work.example', path: `${FF}/b.Profile 6`, at: NOW })
+    expect(offerFor(URL, 'ben@work.example', ACCOUNTS, [], NOW, PARTNERS)?.partner).toBe('ana@work.example')
+    expect(offerFor(URL, 'me@gmail.com', ACCOUNTS, [], NOW, PARTNERS)).toBe(null)
+    expect(offerFor(URL, 'ana@work.example', ACCOUNTS, [URL], NOW, PARTNERS)).toBe(null)
   })
 
   test('the offered list is checked, keeps the newest, and an offer lapses', async () => {
@@ -42,7 +44,7 @@ describe('the share model', () => {
     expect(withOffered(['a', 'b'], 'a')).toEqual(['b', 'a'])
     const many = Array.from({ length: 250 }, (_, i) => `u${i}`)
     expect(withOffered(many, 'new')).toHaveLength(200)
-    const o = offerFor(URL, 'jlim@aurrigo.com', ACCOUNTS, [], NOW)
+    const o = offerFor(URL, 'ana@work.example', ACCOUNTS, [], NOW, PARTNERS)
     expect(liveOffer(o, NOW + OFFER_WINDOW_MS)).toEqual(o)
     expect(liveOffer(o, NOW + OFFER_WINDOW_MS + 1)).toBe(null)
   })
@@ -52,7 +54,7 @@ function props(bodyColumns: number) {
   return { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns, scroll: { offset: 0, bodyRows: 12 }, view: {} }
 }
 
-// A session signed in as jlim@aurrigo.com. The store keeps what the mod
+// A session signed in as ana@work.example. The store keeps what the mod
 // writes, and every process the mod starts is recorded.
 async function start($: Engine, on: On): Promise<{ ran: string[][]; clock: MockClock }> {
   const clock = mock.clock(on, { now: NOW })
@@ -64,7 +66,8 @@ async function start($: Engine, on: On): Promise<{ ran: string[][]; clock: MockC
     if (e.argv[0]?.endsWith('/bin/firefox-profiles')) return { value: { ...RAN, stdout: PROFILES } }
     return { value: { ...RAN, exitCode: 1, stdout: '' } }
   })
-  on('fs.read', async () => ({ value: JSON.stringify({ oauthAccount: { emailAddress: 'jlim@aurrigo.com' } }) }))
+  // The personal config names the accounts and the share pairs. Every other read is the credentials file.
+  on('fs.read', async (_$, e) => ({ value: e.path === '/home/k/.config/chrysaki/claude.json' ? PERSONAL : JSON.stringify({ oauthAccount: { emailAddress: 'ana@work.example' } }) }))
   on('fs.exists', async () => ({ value: true }))
   on('env.set', async () => ({ value: undefined }))
   on('settings.read', async () => ({ value: {} }))
@@ -86,7 +89,7 @@ async function start($: Engine, on: On): Promise<{ ran: string[][]; clock: MockC
 test('a new artifact offers the share, and the key opens it in the owner profile', async ($, on) => {
   const { ran } = await start($, on)
   await $.tool.call({ tool: 'Artifact', file_path: 'page.html' } as never)
-  expect(ran.some(argv => argv[2]?.endsWith('/bin/share-notify') && argv[4] === URL && argv[5] === 'limj@aurrigo.com')).toBe(true)
+  expect(ran.some(argv => argv[2]?.endsWith('/bin/share-notify') && argv[4] === URL && argv[5] === 'ben@work.example')).toBe(true)
 
   const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface: 'terminal', component: 'AbovePrompt', props: props(200) })
   await ui.press({ key: 'share' })

@@ -28,8 +28,10 @@ fi
 case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*)
     # Windows Git Bash: ensure WinGet-installed tools (jq, etc.) are on PATH
-    WINGET_LINKS="/c/Users/Kidriel/AppData/Local/Microsoft/WinGet/Links"
-    [ -d "$WINGET_LINKS" ] && export PATH="$PATH:$WINGET_LINKS"
+    if [ -n "${LOCALAPPDATA:-}" ]; then
+      WINGET_LINKS="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || printf '%s' "$LOCALAPPDATA")/Microsoft/WinGet/Links"
+      [ -d "$WINGET_LINKS" ] && export PATH="$PATH:$WINGET_LINKS"
+    fi
     ;;
 esac
 
@@ -72,7 +74,7 @@ esac
 dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
 dir_name=$(basename "$dir")
 
-# --- smart CWD display: show parent/basename for context (e.g. dev/obKidian) ---
+# --- smart CWD display: show parent/basename for context (e.g. dev/notes) ---
 raw_parent=$(dirname "$dir" 2>/dev/null)
 parent_base=$(basename "$raw_parent" 2>/dev/null)
 if [ "$raw_parent" = "$HOME" ] || [ "$raw_parent" = "/" ] || \
@@ -122,11 +124,16 @@ if [ -n "$remote" ]; then
   fi
 fi
 
-# --- inbox depth (obKidian only) ---
+# --- personal config: ~/.config/chrysaki/claude.json, as the mod reads it ---
+PERSONAL="${CHRYSAKI_CLAUDE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/chrysaki/claude.json}"
+personal() { [ -f "$PERSONAL" ] && jq -r "$@" "$PERSONAL" 2>/dev/null; }
+
+# --- inbox depth: the list under "## <heading>" in the personal config's inbox file ---
 inbox_depth=0
-SCRATCH="$dir/001-Inbox/Scratch Book.md"
-if [ -f "$SCRATCH" ]; then
-  inbox_depth=$(awk '/^## Ramblings/{found=1; next} /^## /{found=0} found && /^- /{c++} END{print c+0}' "$SCRATCH")
+_inbox_file=$(personal '.inbox.file // empty')
+_inbox_heading=$(personal '.inbox.heading // "Inbox"')
+if [ -n "$_inbox_file" ] && [ -f "$dir/$_inbox_file" ]; then
+  inbox_depth=$(awk -v h="## $_inbox_heading" '$0 == h {found=1; next} /^## /{found=0} found && /^- /{c++} END{print c+0}' "$dir/$_inbox_file")
 fi
 
 # --- usage stats (5h / 7d) from native rate_limits in JSON stdin ---
@@ -137,13 +144,18 @@ five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty'
 seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null)
 
 # --- account config dir (still needed for email display and fetch-stats.sh) ---
+# The personal config's configDirs rules pick the folder for a cwd that
+# contains "match". The first match wins.
+_is_work=false
 if [ -n "$CLAUDE_CONFIG_DIR" ]; then
   _config_dir="$CLAUDE_CONFIG_DIR"
 else
-  case "$dir" in
-    */workdev/Aurrigo*) _config_dir="$HOME/.claude-aurrigo" ;;
-    *)                  _config_dir="$HOME/.claude" ;;
-  esac
+  _config_dir="$HOME/.claude"
+  _rule=$(personal --arg d "$dir" '[.configDirs[]? | . as $r | select($r.match != "" and ($d | contains($r.match)))][0] // empty | "\(.dir)\t\(.isWork // false)"' 2>/dev/null)
+  if [ -n "$_rule" ]; then
+    _config_dir=$(printf '%s' "${_rule%%	*}" | sed "s|^~|$HOME|")
+    _is_work="${_rule##*	}"
+  fi
 fi
 _acct=$(basename "$_config_dir")
 
@@ -539,13 +551,13 @@ BAR_STYLE="${CHRYSAKI_BAR_STYLE:-wave}"
 
 # --- active Claude account (from resolved config dir) ---
 # Credentials file: for personal account it's $HOME/.claude.json (at home root),
-# for Aurrigo it's $HOME/.claude-aurrigo/.claude.json (inside config dir)
+# for any other config dir it is <dir>/.claude.json (inside the dir)
 if [ "$_acct" = ".claude" ]; then
   _creds_file="$HOME/.claude.json"
 else
   _creds_file="${_config_dir}/.claude.json"
 fi
-if [ "$_acct" = ".claude-aurrigo" ]; then
+if [ "$_is_work" = "true" ]; then
   C_ACCOUNT="$C_ORANGE"
 else
   C_ACCOUNT="$C_EMERALD_LT"

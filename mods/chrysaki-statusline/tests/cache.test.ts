@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { cacheView, inferTtl, inferredCache, leadSeconds, missCause, nextAlert, parseStatuslineCache, toneColor } from '../hooks/cache'
+import { cacheView, inferTtl, inferredCache, leadSeconds, missCause, nextAlert, parseStatuslineCache, readCacheFile, resetCacheReport, toneColor } from '../hooks/cache'
+import type { CacheFileHost } from '../hooks/cache'
 import { ROLE } from '../hooks/palette'
 import type { StatuslineCache } from '../types'
 
@@ -100,5 +101,83 @@ describe('the live statusLine prompt_cache shape', () => {
     expect(missCause('ttl_expired_5m')).toBe('ttl_expired_5m')
     expect(missCause({ causes: [] })).toBeUndefined()
     expect(missCause(null)).toBeUndefined()
+  })
+})
+
+// A host that counts its calls. Each field of `over` replaces one default.
+function stubHost(over: Partial<CacheFileHost> = {}) {
+  const calls = { readFile: 0, run: 0, report: [] as string[], argv: [] as string[][] }
+  const host: CacheFileHost = {
+    sessionId: async () => 's',
+    runtimeDir: async () => undefined,
+    readFile: async () => { calls.readFile += 1; return '{}' },
+    run: async argv => { calls.run += 1; calls.argv.push(argv); return { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } },
+    report: text => { calls.report.push(text) },
+    fail: error => { throw error },
+    ...over,
+  }
+  return { host, calls }
+}
+
+const MISSING = 'ENOENT: no such file or directory, open /tmp/chrysaki-statusline/s.json'
+const VALID = JSON.stringify({ prompt_cache: { warm: true, ttl: '5m', expires_at: 1_800_000_300 } })
+
+describe('readCacheFile', () => {
+  test('a file that no reader finds reads silently', async () => {
+    resetCacheReport()
+    const { host, calls } = stubHost({ readFile: async () => { throw new Error(MISSING) } })
+    expect(await readCacheFile(host)).toBeNull()
+    expect(calls.report).toEqual([])
+  })
+
+  test('an ENOENT code is silent too', async () => {
+    resetCacheReport()
+    const { host, calls } = stubHost({ readFile: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }) } })
+    expect(await readCacheFile(host)).toBeNull()
+    expect(calls.report).toEqual([])
+  })
+
+  test('an ENOENT from fs.read still tries cat on the default /tmp path', async () => {
+    resetCacheReport()
+    const { host, calls } = stubHost({
+      readFile: async () => { throw new Error(MISSING) },
+      run: async argv => { calls.argv.push(argv); return { exitCode: 0, stdout: VALID, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } },
+    })
+    const cache = await readCacheFile(host)
+    expect(cache?.ttl).toBe('5m')
+    expect(cache?.source).toBe('statusline')
+    expect(calls.argv).toEqual([['cat', '/tmp/chrysaki-statusline/s.json']])
+    expect(calls.report).toEqual([])
+  })
+
+  test('a cat that cannot run after an ENOENT stays silent', async () => {
+    resetCacheReport()
+    const { host, calls } = stubHost({
+      readFile: async () => { throw new Error(MISSING) },
+      run: async () => { throw new Error('spawn cat ENOENT') },
+    })
+    expect(await readCacheFile(host)).toBeNull()
+    expect(calls.report).toEqual([])
+  })
+
+  test('another read failure still falls back to cat', async () => {
+    resetCacheReport()
+    const { host, calls } = stubHost({
+      readFile: async () => { throw new Error('refused') },
+      run: async argv => { calls.argv.push(argv); return { exitCode: 0, stdout: VALID, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } },
+    })
+    const cache = await readCacheFile(host)
+    expect(cache?.ttl).toBe('5m')
+    expect(calls.argv).toEqual([['cat', '/tmp/chrysaki-statusline/s.json']])
+  })
+
+  test('a file with no prompt_cache reports once', async () => {
+    resetCacheReport()
+    const { host, calls } = stubHost({ readFile: async () => '{not json' })
+    expect(await readCacheFile(host)).toBeNull()
+    expect(calls.report.length).toBe(1)
+    expect(calls.report[0]).toContain('the file holds no prompt_cache')
+    expect(await readCacheFile(host)).toBeNull()
+    expect(calls.report.length).toBe(1)
   })
 })

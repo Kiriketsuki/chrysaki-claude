@@ -183,6 +183,19 @@ function why(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+// A missing file is the normal case where statusline-command.sh never runs, as on the desktop app.
+// The engine reads the literal path, and `cat` can map it differently (MSYS maps /tmp on Windows),
+// so a missing file never skips the `cat` fallback. It only keeps the report quiet.
+function isMissing(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : undefined
+  return code === 'ENOENT' || /\bENOENT\b/.test(why(error))
+}
+
+// Tests clear the once-per-load report between cases.
+export function resetCacheReport(): void {
+  hasReportedCacheRead = false
+}
+
 // Source 1: the statusLine stdin JSON that statusline-command.sh writes for
 // this session. Null when the file is missing or holds no prompt_cache.
 // The engine's file read goes first. When it refuses, `cat` reads the file.
@@ -197,9 +210,11 @@ export async function readCacheFile(host: CacheFileHost): Promise<StatuslineCach
   }
   let text: string | null = null
   let reason = ''
+  let isAbsent = false
   try {
     text = await host.readFile(path)
   } catch (error) {
+    isAbsent = isMissing(error)
     reason = `fs.read: ${why(error)}`
     try {
       const r = await host.run(['cat', path], { timeoutMs: 3000 })
@@ -210,6 +225,8 @@ export async function readCacheFile(host: CacheFileHost): Promise<StatuslineCach
     }
   }
   const parsed = text === null ? null : parseStatuslineCache(text)
+  // Both readers found no file: the normal case on a surface that never runs the script.
+  if (parsed === null && text === null && isAbsent) return null
   if (parsed === null && !hasReportedCacheRead) {
     hasReportedCacheRead = true
     host.report(`cache segment has no data from ${path} (${text === null ? reason : 'the file holds no prompt_cache'})`)

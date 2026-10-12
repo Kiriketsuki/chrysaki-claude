@@ -2,15 +2,32 @@
 
 The chrysaki-statusline mod draws a band above the Claude Code prompt. Other mods and processes add segments to it through this protocol. A contributor needs no dependency on chrysaki-statusline. Without that mod, nothing reads the file.
 
-Version 1 carries segments, drawn in a row under the band header. The types are in [`band.d.ts`](band.d.ts).
+Version 1 carries segments. The terminal draws them in a row under the band header, and the desktop draws them in the header. The types are in [`band.d.ts`](band.d.ts).
 
 ## Write a file
 
 Write one JSON file per source:
 
 ```
-$XDG_RUNTIME_DIR/chrysaki-band/<source>.json
+<band folder>/<source>.json
 ```
+
+## The band folder
+
+The rule is the same on every platform. The first variable that is set and not empty wins:
+
+| Order | Variable | Band folder | Usual platform |
+|:---|:---|:---|:---|
+| 1 | `CHRYSAKI_BAND_DIR` | The value itself | Any, as an override |
+| 2 | `XDG_RUNTIME_DIR` | `$XDG_RUNTIME_DIR/chrysaki-band` | Linux |
+| 3 | `TMPDIR` | `$TMPDIR/chrysaki-band` | macOS |
+| 4 | `TEMP` | `%TEMP%\chrysaki-band` | Windows |
+| 5 | `TMP` | `%TMP%\chrysaki-band` | Windows |
+| 6 | None | `/tmp/chrysaki-band` | A fallback |
+
+A writer and the statusline must see the same variables. A process that starts outside the desktop session, such as a cron job or a service, can lack `XDG_RUNTIME_DIR`. Set `CHRYSAKI_BAND_DIR` for both sides in that case.
+
+Do not use Node's `os.tmpdir()` alone. It skips `XDG_RUNTIME_DIR`, and on Windows it can fall back to a folder outside this rule.
 
 ```json
 {
@@ -61,17 +78,22 @@ The statusline guards every ground and lettering pair to a contrast of 4.5:1.
 
 ## From a Claude Code mod
 
-Copy [`client.ts`](client.ts) and [`band.d.ts`](band.d.ts) into the mod. The validator follows `$` only in the module that registers the hooks, so `client.ts` never touches `$`. Build a `BandHost` from `$` in the register module and pass it in:
+Copy [`client.ts`](client.ts) and [`band.d.ts`](band.d.ts) into the mod. The validator follows `$` only in the module that registers the hooks. For that reason `client.ts` never touches `$`. The engine call `$.env.get` takes literal names only, so the register module reads the five variables itself. Build a `BandHost` from `$` there and pass it in:
 
 ```ts
 import { publishBand } from './chrysaki-band/client'
 import type { BandHost } from './chrysaki-band/client'
 
 const bandHost = ($: EngineInterface): BandHost => ({
-  runtimeDir: async () => (await $.env.get('XDG_RUNTIME_DIR')) ?? '/tmp',
+  env: async () => ({
+    CHRYSAKI_BAND_DIR: await $.env.get('CHRYSAKI_BAND_DIR'),
+    XDG_RUNTIME_DIR: await $.env.get('XDG_RUNTIME_DIR'),
+    TMPDIR: await $.env.get('TMPDIR'),
+    TEMP: await $.env.get('TEMP'),
+    TMP: await $.env.get('TMP'),
+  }),
   now: async () => $.clock.now(),
   write: async (path, text) => $.fs.write(path, text),
-  run: async argv => { await $.process.run(argv, { timeoutMs: 5000 }) },
 })
 
 $.clock.every(10000, () => {
@@ -79,17 +101,53 @@ $.clock.every(10000, () => {
 })
 ```
 
-`publishBand` writes a temporary file, then renames it, so the statusline never reads half a file. `bandText` gives the file's text alone, for a test.
+The client runs no shell command, so it works on Linux, macOS and Windows. The engine call `$.fs.write` makes the folder. The engine has no rename, so the client writes the file in place. The function `bandText` gives the file's text alone, for a test. Run the client's own tests with `node --test protocol/chrysaki-band/client.test.ts`.
+
+## Half a file
+
+A read can meet a file that a writer has not finished, or a file that Windows holds locked. The statusline then keeps the last good items of that source until their `ttlMs` runs out. The band does not flicker, and a file that stays broken still leaves on time. A file that parses but breaks a rule is different: it draws nothing at once.
+
+A process that can rename should still write a temporary file and rename it over the target. The temporary name must not end in `.json`, because the statusline lists only `*.json`. On Windows a rename can fail while the statusline reads the target. Write again on the next tick.
 
 ## From any process
 
-Any process on the same machine can write the file, for example a daemon or a shell script:
+Any process on the same machine can write the file, for example a daemon or a shell script.
+
+zsh or bash, on Linux or macOS:
 
 ```bash
-dir="${XDG_RUNTIME_DIR:-/tmp}/chrysaki-band"
+base="${XDG_RUNTIME_DIR:-${TMPDIR:-${TEMP:-${TMP:-/tmp}}}}"
+dir="${CHRYSAKI_BAND_DIR:-${base%/}/chrysaki-band}"
 mkdir -p "$dir"
 printf '{"v":1,"source":"backup","updatedAt":%s,"items":[{"id":"run","icon":"⟳","text":"backup 42%%","tone":"info"}]}' \
-  "$(date +%s%3N)" > "$dir/backup.json.tmp" && mv "$dir/backup.json.tmp" "$dir/backup.json"
+  "$(($(date +%s) * 1000))" > "$dir/backup.json.tmp" && mv -f "$dir/backup.json.tmp" "$dir/backup.json"
 ```
 
-Write to a temporary file and rename it, so the statusline never reads half a file. A file that does not parse draws nothing until the next listing.
+PowerShell, on Windows:
+
+```powershell
+$base = @($env:XDG_RUNTIME_DIR, $env:TMPDIR, $env:TEMP, $env:TMP, '/tmp') | Where-Object { $_ } | Select-Object -First 1
+$dir = if ($env:CHRYSAKI_BAND_DIR) { $env:CHRYSAKI_BAND_DIR } else { Join-Path $base 'chrysaki-band' }
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$file = @{ v = 1; source = 'backup'; updatedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  items = @(@{ id = 'run'; icon = '⟳'; text = 'backup 42%'; tone = 'info' }) }
+$tmp = Join-Path $dir 'backup.json.tmp'
+[IO.File]::WriteAllText($tmp, ($file | ConvertTo-Json -Depth 4 -Compress))
+Move-Item -Force $tmp (Join-Path $dir 'backup.json')
+```
+
+`[IO.File]::WriteAllText` writes UTF-8 with no byte order mark. Windows PowerShell 5 `Set-Content` adds one, and the statusline then cannot parse the file.
+
+Node:
+
+```js
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const env = process.env
+const dir = env.CHRYSAKI_BAND_DIR || join(env.XDG_RUNTIME_DIR || env.TMPDIR || env.TEMP || env.TMP || '/tmp', 'chrysaki-band')
+mkdirSync(dir, { recursive: true })
+const target = join(dir, 'backup.json')
+writeFileSync(`${target}.${process.pid}.tmp`, JSON.stringify({ v: 1, source: 'backup', updatedAt: Date.now(), items: [] }))
+renameSync(`${target}.${process.pid}.tmp`, target)
+```

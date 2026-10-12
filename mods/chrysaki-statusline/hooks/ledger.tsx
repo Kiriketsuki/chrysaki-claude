@@ -11,88 +11,24 @@ import type { RenderElement } from 'claude-code'
 import type { StatuslineWindow } from '../types'
 import { cacheCard, toneColor } from './cache'
 import type { BandData } from './draw'
+import type { BarStyle } from './format'
 import { CTX_AMBER_TOKENS, CTX_RED_TOKENS, barCells, isHandoffDue, kilo, smoothCells, untilReset, usageColor } from './format'
-import { loopSampler, mixHex, readableGround } from './gradient'
+import { GEMS, facet } from './gem'
+import { AMOUNT, BAR_LONG, BAR_SHORT, DESKTOP_FIT, FIG, GIT_MIN, RESET, SEP, SOCKET, TERMINAL_FIT } from './grid'
+import type { Fit } from './grid'
+import { mixHex } from './gradient'
 import { CORE, ROLE } from './palette'
-import { frameColor, hoverGroup, spaces, truncate } from './prims'
-import type { Table } from './prims'
-import { hasRaster, packCells, paintCells } from './raster'
+import { hoverGroup, truncate } from './prims'
+import type { Prims, Table } from './prims'
+import { isDesktop, primsFor } from './prims-for'
 import type { Paint } from './raster'
+import { SWEEP_FRAMES, dashes, isRuleLive, ruleFrame, ruleText, rulePaints } from './rules'
+import type { Cross, RuleSpec } from './rules'
 import { FIVE_HOURS_MS, SEVEN_DAYS_MS, SPARK_CELLS, recentTokens, windowBuckets } from './history'
 
-// Empty bar cells: dim sockets in the Border colour.
-const SOCKET = CORE.border
-// The column separator: two cells of padding on each side of the bar.
-export const SEP = '  │  '
-// The bar length when the band has room, and when it is tight.
-const BAR_LONG = 16
-const BAR_SHORT = 12
-// Git needs at least this many cells to share the rows of usage and context.
-// Below it, git takes two rows of its own.
-const GIT_MIN = 56
-// The fixed fields of the context and cache cells: figure, amount, key.
-// KEY fits `⬢ h: handoff`: the painter adds the `h: ` hotkey mark.
-const FIG = 4
-const AMOUNT = 10
-const KEY = 12
-
-// --- Badges ----------------------------------------------------------------------
-
-// A jewel for a badge: its dim edge and its light catch.
-export type Gem = { dim: string; light: string }
-
-export const GEMS = {
-  emerald: { dim: CORE.emeraldDim, light: CORE.emeraldLight },
-  teal: { dim: CORE.tealDim, light: CORE.tealLight },
-  blue: { dim: CORE.blueDim, light: CORE.blueLight },
-  amethyst: { dim: CORE.amethystDim, light: CORE.amethystLight },
-  rhodolite: { dim: mixHex(CORE.rhodolite, CORE.abyss, 0.4), light: mixHex(CORE.rhodolite, CORE.textPrimary, 0.2) },
-} as const
-
-// The ground at place `t` (0 to 1) across a gem badge. The light catches a
-// little left of centre and falls to the dim edge on both sides, like a cut
-// facet.
-export function facet(g: Gem, t: number): string {
-  return mixHex(g.dim, g.light, Math.max(0, 1 - Math.abs(t - 0.38) * 2.2))
-}
-
-// The caps that make a badge a flat hexagon: ◀ body ▶.
-const CAP_LEFT = '\ue0b2'
-const CAP_RIGHT = '\ue0b0'
-
-type Badge = {
-  key: string
-  text: string
-  gem: Gem
-  // The badge's cells, its left cap included. The right cap and one space follow.
-  width: number
-  press?: { label: string; hotkey?: string; onPress: () => void }
-}
-
-function center(text: string, width: number): string {
-  const room = Math.max(0, width - text.length)
-  const left = Math.floor(room / 2)
-  return ' '.repeat(left) + text + ' '.repeat(room - left)
-}
-
-// A hexagon gem badge: the left cap, a body whose ground runs across the
-// facet cell by cell, the right cap, and one space. A pressable badge draws
-// its cells as the children of a plain Button.
-function badge(T: Table, b: Badge): RenderElement[] {
-  const { Box, Text, Button } = T
-  const inner = b.width - 1
-  const at = (i: number) => readableGround(facet(b.gem, i / Math.max(1, inner - 1)), ROLE.text)
-  const cells = (text: string, offset: number) => [...text].map((ch, i) => <Text backgroundColor={at(i + offset)} color={ROLE.text} bold>{ch}</Text>)
-  const mark = b.press?.hotkey === undefined ? 0 : 3
-  const body = b.press === undefined
-    ? <Text>{cells(center(b.text, inner), 0)}</Text>
-    : (
-      <Box key={`badge-${b.key}`} width={inner} backgroundColor={at(1)}>
-        <Button key={b.key} hotkey={b.press.hotkey} plain onPress={b.press.onPress}>{cells(center(b.press.label, inner - mark), mark)}</Button>
-      </Box>
-    )
-  return [<Text color={at(0)}>{CAP_LEFT}</Text>, body, <Text color={at(inner - 1)}>{CAP_RIGHT}</Text>, <Text> </Text>]
-}
+export { GEMS, facet, SEP, SWEEP_FRAMES, dashes, isRuleLive, ruleFrame, ruleText, rulePaints }
+export type { Cross, RuleSpec }
+export { paintRow } from './prims-terminal'
 
 // --- Bars ------------------------------------------------------------------------
 
@@ -152,77 +88,48 @@ export function smoothPaints(pct: number, scale: Scale, length: number): Paint[]
   }))
 }
 
-// One row of cells: a Raster on the terminal, runs of Text elsewhere.
-export function paintRow(T: Table, surface: string, key: string, paints: readonly Paint[]): RenderElement {
-  if (hasRaster(T, surface)) {
-    const { Raster } = T
-    return <Raster key={key} columns={paints.length} rows={1} cells={packCells(paintCells(paints))} />
-  }
-  const { Text } = T
-  const runs: { fg: string | null; bg: string | null; text: string }[] = []
-  for (const p of paints) {
-    const last = runs[runs.length - 1]
-    if (last !== undefined && last.fg === p.fg && last.bg === p.bg) last.text += p.glyph
-    else runs.push({ fg: p.fg, bg: p.bg, text: p.glyph })
-  }
-  return (
-    <Text key={key}>
-      {runs.map(r => <Text {...(r.fg === null ? {} : { color: r.fg })} {...(r.bg === null ? {} : { backgroundColor: r.bg })}>{r.text}</Text>)}
-    </Text>
-  )
+// The cells of a bar that draws discrete glyphs: each filled cell takes the
+// colour of its own place on the scale, each empty one the socket.
+export function barPaints(pct: number, style: BarStyle, shift: number, scale: Scale, length: number): Paint[] {
+  return barCells(pct, style, shift, length).map((c, i) => ({
+    glyph: c.glyph,
+    fg: c.isFilled ? scale.at(((i + 0.5) / length) * 100, length) : SOCKET,
+    bg: null,
+  }))
 }
 
 // A bar coloured by its scale at each cell. `reached` is the colour at the
 // percent, or the text colour while the bar stays in its calm zone.
-function zoneBar(T: Table, d: BandData, key: string, pct: number, scale: Scale, length: number): Bar {
-  const { Text } = T
+function zoneBar(P: Prims, d: BandData, key: string, pct: number, scale: Scale, length: number): Bar {
   const top = scale.at(pct, length)
   if (d.barStyle === 'smooth') {
     const paints = smoothPaints(pct, scale, length)
     const isEmpty = paints.every(p => p.fg === null)
-    return { el: paintRow(T, d.surface, `bar-${key}`, paints), reached: isEmpty || top === scale.calm ? ROLE.text : top }
+    return { el: P.row(`bar-${key}`, paints), reached: isEmpty || top === scale.calm ? ROLE.text : top }
   }
   const cells = barCells(pct, d.barStyle, d.phase % 4, length)
-  const colors = cells.map((c, i) => (c.isFilled ? scale.at(((i + 0.5) / length) * 100, length) : SOCKET))
-  const runs: { color: string; text: string }[] = []
-  cells.forEach((c, i) => {
-    const color = colors[i] ?? SOCKET
-    const last = runs[runs.length - 1]
-    if (last !== undefined && last.color === color) last.text += c.glyph
-    else runs.push({ color, text: c.glyph })
-  })
   const isEmpty = cells.every(c => !c.isFilled)
-  return { el: <Text>{runs.map(r => <Text color={r.color}>{r.text}</Text>)}</Text>, reached: isEmpty || top === scale.calm ? ROLE.text : top }
+  return { el: P.textBar(barPaints(pct, d.barStyle, d.phase % 4, scale, length)), reached: isEmpty || top === scale.calm ? ROLE.text : top }
 }
 
 // A bar in one colour, for the cache that drains as it cools.
-function plainBar(T: Table, d: BandData, key: string, pct: number, color: string, length: number): RenderElement {
-  return zoneBar(T, d, key, pct, { at: () => color, calm: color }, length).el
+function plainBar(P: Prims, d: BandData, key: string, pct: number, color: string, length: number): RenderElement {
+  return zoneBar(P, d, key, pct, { at: () => color, calm: color }, length).el
 }
 
 // A bar with no figure yet: the bare track.
-function emptyBar(T: Table, d: BandData, key: string, length: number): RenderElement {
-  const { Text } = T
-  if (d.barStyle === 'smooth') return paintRow(T, d.surface, `bar-${key}`, smoothPaints(0, USAGE_SCALE, length))
-  return <Text color={SOCKET}>{'─'.repeat(length)}</Text>
+function emptyBar(P: Prims, d: BandData, key: string, length: number): RenderElement {
+  if (d.barStyle === 'smooth') return P.row(`bar-${key}`, smoothPaints(0, USAGE_SCALE, length))
+  return P.emptyLine(length)
 }
 
 // --- Cells -----------------------------------------------------------------------
 
-// A fixed-width figure, padded on the side away from its column edge.
-function fig(T: Table, text: string, width: number, color: string, opts: { bold?: boolean; right?: boolean } = {}): RenderElement {
-  const { Text } = T
-  const padded = opts.right ? text.padStart(width) : text.padEnd(width)
-  return <Text color={color} bold={opts.bold}>{truncate(padded, width)}</Text>
-}
+// The bar length and the spark length of a band. A spark of 0 draws none. The
+// `fit` holds the widths that change with the surface. The terminal sets none.
+export type Geom = { bar: number; spark: number; fit?: Fit }
 
-function cell(T: Table, key: string, width: number, children: RenderElement[]): RenderElement {
-  const { Box } = T
-  return <Box key={key} width={width} overflow="hidden">{children}</Box>
-}
-
-// The bar length and the spark length of a band. A spark of 0 draws none.
-export type Geom = { bar: number; spark: number }
+export const fitOf = (g: Geom): Fit => g.fit ?? TERMINAL_FIT
 
 // The cells a spark takes, its trailing space included.
 function sparkRoom(g: Geom): number {
@@ -231,12 +138,12 @@ function sparkRoom(g: Geom): number {
 
 // badge 6, cap and space 2, bar, 1, percent 4, 1, spark, reset 8.
 export function usageWidth(g: Geom): number {
-  return 6 + 2 + g.bar + 1 + FIG + 1 + sparkRoom(g) + 8
+  return fitOf(g).usage + 2 + g.bar + 1 + FIG + 1 + sparkRoom(g) + RESET
 }
 
 // badge 9, cap and space 2, bar, 1, figure 4, 1, spark, amount 10, 1, key 12.
 export function contextWidth(g: Geom): number {
-  return 9 + 2 + g.bar + 1 + FIG + 1 + sparkRoom(g) + AMOUNT + 1 + KEY
+  return fitOf(g).ctx + 2 + g.bar + 1 + FIG + 1 + sparkRoom(g) + AMOUNT + 1 + fitOf(g).key
 }
 
 // --- Sparks ----------------------------------------------------------------------
@@ -255,8 +162,8 @@ export function sparkPaints(values: readonly (number | null)[], level: (v: numbe
   })
 }
 
-function sparkRow(T: Table, d: BandData, key: string, paints: readonly Paint[]): RenderElement[] {
-  return [paintRow(T, d.surface, `spark-${key}`, paints), spaces(T, 1)]
+function sparkRow(P: Prims, key: string, paints: readonly Paint[]): RenderElement[] {
+  return [P.row(`spark-${key}`, paints), P.gap(1)]
 }
 
 // The context colour of a token count: the token zones of the ctx bar.
@@ -266,116 +173,100 @@ function tokenColor(tokens: number): string {
   return ROLE.emeraldLt
 }
 
-// The reset figure. A press reads the usage endpoint now. The arrow turns
-// into a half disc while the read is in flight.
-function resetKey(T: Table, d: BandData, label: string, text: string): RenderElement {
-  const { Box, Text, Button } = T
-  return (
-    <Box key={`reset-${label}`}>
-      <Text color={d.isLimitsBusy ? ROLE.blondeLt : ROLE.teal}>{d.isLimitsBusy ? '◐' : '↻'}</Text>
-      <Button key={`limits-${label}`} label={` ${text}`.padEnd(7)} plain dimColor onPress={d.onRefreshLimits} />
-    </Box>
-  )
-}
-
 // The model-scoped weekly limits, for the 7d card.
 function scopedText(d: BandData): string {
   const list = d.usage?.scoped ?? []
   return list.map(s => ` · ${s.label} ${s.percent}%`).join('')
 }
 
-function windowCell(T: Table, d: BandData, label: string, w: StatuslineWindow | undefined, g: Geom): RenderElement {
+export function windowCell(T: Table, P: Prims, d: BandData, label: string, w: StatuslineWindow | undefined, g: Geom): RenderElement {
   const pct = w?.percent ?? 0
-  const head = badge(T, { key: label, text: label, gem: label === '5h' ? GEMS.emerald : GEMS.teal, width: 6 })
+  const head = P.badge({ key: label, text: label, gem: label === '5h' ? GEMS.emerald : GEMS.teal, width: fitOf(g).usage })
   if (w === undefined) {
-    return cell(T, `cell-${label}`, usageWidth(g), [...head, emptyBar(T, d, label, g.bar), spaces(T, 1 + FIG + 1 + sparkRoom(g)), resetKey(T, d, label, 'read')])
+    return P.cell(`cell-${label}`, usageWidth(g), [...head, emptyBar(P, d, label, g.bar), P.gap(1 + FIG + 1 + sparkRoom(g)), P.resetKey(label, 'read')])
   }
-  const b = zoneBar(T, d, label, pct, USAGE_SCALE, g.bar)
+  const b = zoneBar(P, d, label, pct, USAGE_SCALE, g.bar)
   const samples = label === '5h' ? d.history.fiveHour : d.history.sevenDay
   const span = label === '5h' ? FIVE_HOURS_MS : SEVEN_DAYS_MS
-  const spark = g.spark === 0 ? [] : sparkRow(T, d, label, sparkPaints(windowBuckets(samples, w.resetsAt, span, d.now, g.spark), v => v, usageColor))
+  const spark = g.spark === 0 ? [] : sparkRow(P, label, sparkPaints(windowBuckets(samples, w.resetsAt, span, d.now, g.spark), v => v, usageColor))
   const reset = untilReset(w.resetsAt, d.now)
   const when = w.resetsAt === undefined ? 'reset time unknown' : `resets ${new Date(w.resetsAt).toISOString().slice(11, 16)} UTC, in ${reset}`
   const extra = label === '7d' ? scopedText(d) : ''
-  return cell(T, `cell-${label}`, usageWidth(g), [
+  return P.cell(`cell-${label}`, usageWidth(g), [
     ...head,
     hoverGroup(T, `win-${label}`, `${label} window · ${pct}% used · ${when}${extra} · the spark shows the window so far · press the reset time to read usage now`, [
       b.el,
-      spaces(T, 1),
-      fig(T, `${pct}%`, FIG, b.reached, { bold: true, right: true }),
-      spaces(T, 1),
+      P.gap(1),
+      P.fig(`${pct}%`, FIG, b.reached, { bold: true, right: true }),
+      P.gap(1),
       ...spark,
-      resetKey(T, d, label, reset === '' ? 'read' : reset),
+      P.resetKey(label, reset === '' ? 'read' : reset),
     ]),
   ])
 }
 
 // The key at the end of the context row: handoff past 100k, resume in a
 // fresh session with a handoff path on the clipboard, else fresh.
-function contextKey(T: Table, d: BandData, tokens: number | undefined): RenderElement {
-  const { Box, Text, Button } = T
-  if (d.isHandingOff) return fig(T, '◐ writing', KEY, ROLE.warn, { bold: true })
-  if (tokens === undefined && d.resumePath !== null) {
-    return <Box key="resume-key" width={KEY} flexShrink={0} overflow="hidden"><Text color={ROLE.blondeLt} bold>⬢ </Text><Button key="resume" label="resume" hotkey="r" plain onPress={d.onResume} /></Box>
-  }
-  if (!isHandoffDue(tokens)) return fig(T, '◇ fresh', KEY, ROLE.emeraldLt)
-  return <Box key="handoff-key" width={KEY} flexShrink={0} overflow="hidden"><Text color={ROLE.blondeLt} bold>⬢ </Text><Button key="handoff" label="handoff" hotkey="h" plain onPress={d.onHandoff} /></Box>
+function contextKey(P: Prims, d: BandData, tokens: number | undefined, key: number): RenderElement {
+  if (d.isHandingOff) return P.fig('◐ writing', key, ROLE.warn, { bold: true })
+  if (tokens === undefined && d.resumePath !== null) return P.pressKey('resume-key', 'resume', 'resume', 'r', d.onResume, key)
+  if (!isHandoffDue(tokens)) return P.fig('◇ fresh', key, ROLE.emeraldLt)
+  return P.pressKey('handoff-key', 'handoff', 'handoff', 'h', d.onHandoff, key)
 }
 
-function contextCell(T: Table, d: BandData, g: Geom): RenderElement {
-  const { Text } = T
+export function contextCell(T: Table, P: Prims, d: BandData, g: Geom): RenderElement {
   const u = d.usage
   const tokens = u?.ctxTokens
-  const head = badge(T, { key: 'ctx-detail', text: '', gem: GEMS.blue, width: 9, press: { label: 'ctx', onPress: d.onContext } })
+  const head = P.badge({ key: 'ctx-detail', text: '', gem: GEMS.blue, width: fitOf(g).ctx, press: { label: 'ctx', onPress: d.onContext } })
   if (u?.ctxPercent === undefined) {
     const name = d.resumePath === null ? 'no context yet' : d.resumePath.slice(d.resumePath.lastIndexOf('/') + 1).replace(/\.md$/, '')
-    return cell(T, 'cell-ctx', contextWidth(g), [
-      ...head, emptyBar(T, d, 'ctx', g.bar), spaces(T, 1 + FIG + 1 + sparkRoom(g)), fig(T, name, AMOUNT, ROLE.muted), spaces(T, 1), contextKey(T, d, undefined),
+    return P.cell('cell-ctx', contextWidth(g), [
+      ...head, emptyBar(P, d, 'ctx', g.bar), P.gap(1 + FIG + 1 + sparkRoom(g)), P.fig(name, AMOUNT, ROLE.muted), P.gap(1), contextKey(P, d, undefined, fitOf(g).key),
     ])
   }
-  const b = zoneBar(T, d, 'ctx', u.ctxPercent, zoneScale(contextZones(u.ctxWindow)), g.bar)
+  const b = zoneBar(P, d, 'ctx', u.ctxPercent, zoneScale(contextZones(u.ctxWindow)), g.bar)
   // The context spark: the last token counts, full height at the amber line.
-  const spark = g.spark === 0 ? [] : sparkRow(T, d, 'ctx', sparkPaints(recentTokens(d.ctxHistory, g.spark), v => (v / CTX_AMBER_TOKENS) * 100, tokenColor))
+  const spark = g.spark === 0 ? [] : sparkRow(P, 'ctx', sparkPaints(recentTokens(d.ctxHistory, g.spark), v => (v / CTX_AMBER_TOKENS) * 100, tokenColor))
   const used = tokens === undefined ? '' : kilo(tokens)
   const of = `/${kilo(u.ctxWindow)}`
-  return cell(T, 'cell-ctx', contextWidth(g), [
+  return P.cell('cell-ctx', contextWidth(g), [
     ...head,
     hoverGroup(T, 'ctx', `context ${u.ctxPercent}% · ${tokens ?? '?'} of ${u.ctxWindow} tokens · amber from 250k, red from 500k · handoff at 100k · the spark shows the last turns · press ctx for the breakdown`, [
       b.el,
-      spaces(T, 1),
-      fig(T, `${u.ctxPercent}%`, FIG, b.reached, { bold: true, right: true }),
-      spaces(T, 1),
+      P.gap(1),
+      P.fig(`${u.ctxPercent}%`, FIG, b.reached, { bold: true, right: true }),
+      P.gap(1),
       ...spark,
-      <Text><Text color={ROLE.text} bold>{used}</Text><Text color={ROLE.sec}>{truncate(of, AMOUNT - used.length).padEnd(AMOUNT - used.length)}</Text></Text>,
-      spaces(T, 1),
-      contextKey(T, d, tokens),
+      P.amount(used, of, AMOUNT),
+      P.gap(1),
+      contextKey(P, d, tokens, fitOf(g).key),
     ]),
   ])
 }
 
 const CACHE_STATE = { warm: '● warm', warning: '◐ cooling', cold: '○ cold' } as const
 
-function cacheCell(T: Table, d: BandData, g: Geom): RenderElement {
-  const head = badge(T, { key: 'cache', text: '⧗ cache', gem: GEMS.amethyst, width: 9 })
+export function cacheCell(T: Table, P: Prims, d: BandData, g: Geom): RenderElement {
+  const head = P.badge({ key: 'cache', text: '⧗ cache', gem: GEMS.amethyst, width: fitOf(g).ctx })
   const c = d.cache
   const v = d.cacheView
   if (c === null || v === null) {
-    return cell(T, 'cell-cache', contextWidth(g), [...head, emptyBar(T, d, 'cache', g.bar), spaces(T, 1), fig(T, '…', FIG, ROLE.muted, { right: true })])
+    return P.cell('cell-cache', contextWidth(g), [...head, emptyBar(P, d, 'cache', g.bar), P.gap(1), P.fig('…', FIG, ROLE.muted, { right: true })])
   }
   const color = toneColor(v.tone)
   const ttlMs = c.ttl === '1h' ? 3600000 : 300000
   const leftMs = c.expiresAt === undefined ? 0 : Math.max(0, c.expiresAt - d.now)
   const pct = v.tone === 'cold' ? 0 : Math.round((leftMs / ttlMs) * 100)
-  return cell(T, 'cell-cache', contextWidth(g), [
+  return P.cell('cell-cache', contextWidth(g), [
     ...head,
     hoverGroup(T, 'cache', cacheCard(c, v), [
-      plainBar(T, d, 'cache', pct, color, g.bar),
-      spaces(T, 1),
-      fig(T, v.tone === 'cold' ? '0m' : v.label, FIG, ROLE.text, { bold: true, right: true }),
-      spaces(T, 1 + sparkRoom(g)),
-      fig(T, `ttl ${c.ttl}`, AMOUNT, ROLE.sec),
-      spaces(T, 1),
-      fig(T, CACHE_STATE[v.tone], KEY, v.tone === 'cold' ? ROLE.muted : color, { bold: v.tone !== 'warm' }),
+      plainBar(P, d, 'cache', pct, color, g.bar),
+      P.gap(1),
+      P.fig(v.tone === 'cold' ? '0m' : v.label, FIG, ROLE.text, { bold: true, right: true }),
+      P.gap(1 + sparkRoom(g)),
+      P.fig(`ttl ${c.ttl}`, AMOUNT, ROLE.sec),
+      P.gap(1),
+      P.fig(CACHE_STATE[v.tone], fitOf(g).key, v.tone === 'cold' ? ROLE.muted : color, { bold: v.tone !== 'warm' }),
     ]),
   ])
 }
@@ -389,18 +280,69 @@ function count(T: Table, icon: string, n: number, word: string, color: string): 
   return <Text><Text color={color}>{icon}</Text><Text color={ROLE.text} bold>{` ${n}`}</Text><Text color={ROLE.sec}>{` ${word}`}</Text></Text>
 }
 
-// Row one: branch, ahead and behind, then the commit at HEAD. Row two: the
-// diff, the file counts, then the pull request and issues when there are any.
-function gitCells(T: Table, d: BandData, width: number): [RenderElement, RenderElement] {
+// The text of one count, as `count` draws it.
+function countText(icon: string, n: number, word: string): string {
+  return `${icon} ${n} ${word}`
+}
+
+// The git cells: row one is the branch, ahead and behind, then the commit at
+// HEAD. Row two is the diff, the file counts, then the pull request and
+// issues when there are any. With `splitTail`, a row two wider than its cell
+// hands the pull request and the issues to a third row, under the diff badge.
+// Without the option the cells are the two the terminal draws.
+// The desktop draws no diff row for a folder with no repository, so `b` is
+// null there. The terminal keeps the bare badge row.
+export type GitCells = { a: RenderElement; b: RenderElement | null; c: RenderElement | null }
+
+// What a git row needs besides its badge. The terminal and the desktop read the
+// same numbers, so the layout asks for the row's width before it picks a tier.
+// With `isTrimmed` a count of zero leaves the diff row, so the row is shorter.
+type GitOpts = { splitTail?: boolean; badge?: number; isTrimmed?: boolean }
+
+// The counts of row two, in order, each with its icon and word. With
+// `isTrimmed` a count of zero leaves the row.
+function fileCounts(g: NonNullable<BandData['git']>, isTrimmed: boolean) {
+  const all = [
+    { icon: '●', n: g.staged, word: 'staged', color: ROLE.emeraldLt },
+    { icon: '◆', n: g.unstaged, word: 'unstaged', color: ROLE.blondeLt },
+    { icon: '?', n: g.untracked, word: 'untracked', color: ROLE.teal },
+  ]
+  return isTrimmed ? all.filter(c => c.n > 0) : all
+}
+
+// The cells of the diff counts of row two, the badge included, before the tail.
+function diffWidth(g: NonNullable<BandData['git']>, badge: number, isTrimmed: boolean): number {
+  return badge + 2 + `+${g.insertions}`.length + ` -${g.deletions}`.length
+    + fileCounts(g, isTrimmed).reduce((sum, c) => sum + 2 + countText(c.icon, c.n, c.word).length, 0)
+}
+
+// The cells of the pull request and the issues, with the gap before each.
+function tailWidth(r: BandData['remote']): number {
+  const pr = r?.prNumber == null ? 0 : 2 + `⇄ PR #${r.prNumber}`.length
+  const issues = r?.issues ? 2 + `◌ ${r.issues} issues`.length : 0
+  return pr + issues
+}
+
+// The width the widest git row needs to show all its items on one line. A
+// repository with no git has a short row, so the answer is 0. With `isTrimmed`
+// the counts of zero take no room.
+export function gitRowWidth(d: BandData, badge: number, isTrimmed = false): number {
+  return d.git === null ? 0 : diffWidth(d.git, badge, isTrimmed) + tailWidth(d.remote)
+}
+
+export function gitCells(T: Table, P: Prims, d: BandData, width: number, opts: GitOpts = {}): GitCells {
   const { Text } = T
   const g = d.git
+  const badge = opts.badge ?? TERMINAL_FIT.git
+  const hold = P.hold
   const key = d.hasGitCommand
-    ? badge(T, { key: 'git-pane', text: '', gem: GEMS.rhodolite, width: 8, press: { label: 'git', hotkey: 'g', onPress: d.onGit } })
-    : badge(T, { key: 'git', text: '⎇ git', gem: GEMS.rhodolite, width: 8 })
-  const diff = badge(T, { key: 'diff', text: '± diff', gem: GEMS.rhodolite, width: 8 })
-  const body = width - 10
+    ? P.badge({ key: 'git-pane', text: '', gem: GEMS.rhodolite, width: badge, press: { label: 'git', hotkey: 'g', onPress: d.onGit } })
+    : P.badge({ key: 'git', text: '⎇ git', gem: GEMS.rhodolite, width: badge })
+  const diff = P.badge({ key: 'diff', text: '± diff', gem: GEMS.rhodolite, width: badge })
+  const body = width - (badge + 2)
   if (g === null) {
-    return [cell(T, 'git-a', width, [...key, <Text color={ROLE.muted}>no git repository</Text>]), cell(T, 'git-b', width, [...diff])]
+    const none = P.cell('git-a', width, [...key, hold(<Text color={ROLE.muted}>no git repository</Text>)])
+    return { a: none, b: isDesktop(T, d) ? null : P.cell('git-b', width, [...diff]), c: null }
   }
   const r = d.remote
   const tree = g.worktree ? ` ⌥ ${g.worktree}` : ''
@@ -410,126 +352,51 @@ function gitCells(T: Table, d: BandData, width: number): [RenderElement, RenderE
   const subject = truncate(g.subject, body - head.length - age.length)
   // The subject pads out to the age, so the age sits at the column's end.
   const fill = Math.max(0, body - head.length - age.length - subject.length)
-  const rowA = cell(T, 'git-a', width, [
+  const rowA = P.cell('git-a', width, [
     ...key,
-    hoverGroup(T, 'branch', `${g.repoPath || 'no GitHub remote'} · ${g.branch} → ${g.upstream || 'no upstream'} · ${g.ahead} ahead, ${g.behind} behind`, [
+    hold(hoverGroup(T, 'branch', `${g.repoPath || 'no GitHub remote'} · ${g.branch} → ${g.upstream || 'no upstream'} · ${g.ahead} ahead, ${g.behind} behind`, [
       <Text color={ROLE.teal}>⎇ </Text>,
       <Text color={ROLE.text} bold>{g.branch}</Text>,
       <Text color={ROLE.sec}>{tree}</Text>,
-    ]),
-    spaces(T, 2),
+    ])),
+    P.gap(2),
     ...(g.upstream
       ? [
-        <Text color={g.ahead > 0 ? ROLE.emeraldLt : ROLE.muted}>{`↑${g.ahead}`}</Text>,
-        <Text color={g.behind > 0 ? ROLE.blondeLt : ROLE.muted}>{` ↓${g.behind}`}</Text>,
+        hold(<Text color={g.ahead > 0 ? ROLE.emeraldLt : ROLE.muted}>{`↑${g.ahead}`}</Text>),
+        hold(<Text color={g.behind > 0 ? ROLE.blondeLt : ROLE.muted}>{` ↓${g.behind}`}</Text>),
       ]
-      : [<Text color={ROLE.muted}>no upstream</Text>]),
-    spaces(T, 2),
-    <Text color={ROLE.teal}>{`⊙ ${g.hash} `}</Text>,
-    hoverGroup(T, 'subject', g.subject, [<Text color={ROLE.text}>{subject}</Text>]),
-    spaces(T, fill),
-    <Text color={ROLE.muted}>{age}</Text>,
+      : [hold(<Text color={ROLE.muted}>no upstream</Text>)]),
+    P.gap(2),
+    hold(<Text color={ROLE.teal}>{`⊙ ${g.hash} `}</Text>),
+    hold(hoverGroup(T, 'subject', g.subject, [<Text color={ROLE.text}>{subject}</Text>])),
+    P.fill(fill),
+    hold(<Text color={ROLE.muted}>{age}</Text>),
   ])
   const isClean = g.insertions + g.deletions === 0
   const pr = r?.prNumber == null ? null : r
-  const rowB = cell(T, 'git-b', width, [
+  const issues = r?.issues ? r.issues : 0
+  const prItems: RenderElement[] = pr === null ? [] : [
+    hold(hoverGroup(T, 'pr', pr.prTitle || `PR #${pr.prNumber}`, [<Text color={ROLE.teal}>⇄ </Text>, <Text color={ROLE.text}>{`PR #${pr.prNumber}`}</Text>])),
+  ]
+  const issueItems: RenderElement[] = issues > 0 ? [hold(<Text color={ROLE.blondeLt}>◌ </Text>), hold(<Text color={ROLE.sec}>{`${issues} issues`}</Text>)] : []
+  const isTrimmed = opts.isTrimmed === true
+  const isSplit = opts.splitTail === true && (pr !== null || issues > 0) && gitRowWidth(d, badge, isTrimmed) > width
+  const rowBItems: RenderElement[] = [
     ...diff,
-    <Text color={isClean ? ROLE.muted : ROLE.emeraldLt}>{`+${g.insertions}`}</Text>,
-    <Text color={isClean ? ROLE.muted : ROLE.error}>{` -${g.deletions}`}</Text>,
-    spaces(T, 2),
-    count(T, '●', g.staged, 'staged', ROLE.emeraldLt),
-    spaces(T, 2),
-    count(T, '◆', g.unstaged, 'unstaged', ROLE.blondeLt),
-    spaces(T, 2),
-    count(T, '?', g.untracked, 'untracked', ROLE.teal),
-    ...(pr === null ? [] : [
-      spaces(T, 2),
-      hoverGroup(T, 'pr', pr.prTitle || `PR #${pr.prNumber}`, [<Text color={ROLE.teal}>⇄ </Text>, <Text color={ROLE.text}>{`PR #${pr.prNumber}`}</Text>]),
-    ]),
-    ...(r?.issues ? [spaces(T, 2), <Text color={ROLE.blondeLt}>◌ </Text>, <Text color={ROLE.sec}>{`${r.issues} issues`}</Text>] : []),
-  ])
-  return [rowA, rowB]
+    hold(<Text color={isClean ? ROLE.muted : ROLE.emeraldLt}>{`+${g.insertions}`}</Text>),
+    hold(<Text color={isClean ? ROLE.muted : ROLE.error}>{` -${g.deletions}`}</Text>),
+    ...fileCounts(g, isTrimmed).flatMap(c => [P.gap(2), hold(count(T, c.icon, c.n, c.word, c.color))]),
+  ]
+  if (!isSplit) {
+    const tail = [...(pr === null ? [] : [P.gap(2), ...prItems]), ...(issues > 0 ? [P.gap(2), ...issueItems] : [])]
+    return { a: rowA, b: P.cell('git-b', width, [...rowBItems, ...tail]), c: null }
+  }
+  // The third row lines the tail up under the diff counts, past the badge.
+  const tailRow = [P.gap(badge + 2), ...prItems, ...(pr !== null && issues > 0 ? [P.gap(2)] : []), ...issueItems]
+  return { a: rowA, b: P.cell('git-b', width, rowBItems), c: P.cell('git-c', width, tailRow) }
 }
 
 // --- Layout ----------------------------------------------------------------------
-
-// The animated rule: a gradient loop that travels one full cycle across the
-// band in SWEEP_FRAMES steps. Only safe line accents take part: Royal Blue and
-// Amethyst are fills alone.
-export const SWEEP_FRAMES = 40
-const SWEEP_STOPS = [ROLE.emeraldLt, ROLE.teal, CORE.cerulean, ROLE.teal] as const
-const sweepAt = loopSampler(SWEEP_STOPS)
-
-// The dashed rule between two ledger rows. A separator above and below it
-// crosses it as `┼`. One above alone ends on it as `┴`. Animated, each dash
-// takes its place on the gradient loop, shifted by the sweep frame. On the
-// terminal the rule is a Raster, and the sweep clock repaints its cells with
-// `$.ui.blit`, so the band does not draw again. Elsewhere the rule keeps the
-// frame of its last draw. Inside the cache warning lead, or with the
-// animation off, the rule takes the frame colour.
-function dashRule(T: Table, d: BandData, spec: RuleSpec): RenderElement {
-  const { Text } = T
-  const base = frameColor(d)
-  const text = ruleText(spec.width, spec.crosses)
-  if (!d.isRuleAnimated || base !== 'promptBorder') return <Text color={base}>{text}</Text>
-  if (hasRaster(T, d.surface)) return paintRow(T, d.surface, spec.key, rulePaints(spec, d.sweep))
-  const unit = DASH + GAP_CELLS
-  const parts: RenderElement[] = []
-  for (let x = 0; x < spec.width; x += unit) {
-    parts.push(<Text color={sweepAt(x / Math.max(1, spec.width) + d.sweep / SWEEP_FRAMES)}>{text.slice(x, x + unit)}</Text>)
-  }
-  return <Text>{parts}</Text>
-}
-
-// True when the band draws its rules as Rasters the sweep clock repaints.
-export function isRuleLive(T: Table, d: BandData): boolean {
-  return d.isRuleAnimated && frameColor(d) === 'promptBorder' && hasRaster(T, d.surface)
-}
-
-// One animated rule: its Raster key, its width and its crossings.
-export type RuleSpec = { key: string; width: number; crosses: Cross[] }
-
-// The cells of a rule at sweep frame `frame`. Each dash cell takes its own
-// place on the gradient loop. Gaps take the terminal's colour.
-export function rulePaints(spec: RuleSpec, frame: number): Paint[] {
-  const width = Math.max(1, spec.width)
-  return [...ruleText(spec.width, spec.crosses)].map((glyph, x) => ({
-    glyph,
-    fg: glyph === ' ' ? null : sweepAt(x / width + frame / SWEEP_FRAMES),
-    bg: null,
-  }))
-}
-
-// The packed cells a blit sends for a rule at sweep frame `frame`.
-export function ruleFrame(spec: RuleSpec, frame: number): string {
-  return packCells(paintCells(rulePaints(spec, frame)))
-}
-
-// A dash run of DASH cells, then GAP_CELLS blank cells, cut to `width`.
-const DASH = 2
-const GAP_CELLS = 1
-
-
-export function dashes(width: number): string {
-  const unit = '─'.repeat(DASH) + ' '.repeat(GAP_CELLS)
-  return unit.repeat(Math.ceil(Math.max(0, width) / unit.length)).slice(0, Math.max(0, width))
-}
-
-// Where a column separator meets the rule, and how.
-export type Cross = { at: number; glyph: '┼' | '┴' }
-
-// The dashes with each crossing drawn in. A crossing gets a dash cell on both
-// sides, so it never floats in a gap.
-export function ruleText(width: number, crosses: readonly Cross[]): string {
-  const cells = [...dashes(width)]
-  for (const c of crosses) {
-    if (c.at < 0 || c.at >= width) continue
-    cells[c.at] = c.glyph
-    if (c.at > 0) cells[c.at - 1] = '─'
-    if (c.at + 1 < width) cells[c.at + 1] = '─'
-  }
-  return cells.join('')
-}
 
 // The column plan for a band `inner` cells wide: the bar and spark lengths,
 // whether git shares the rows, and the width git gets.
@@ -543,41 +410,60 @@ const GEOMS: readonly Geom[] = [
   { bar: BAR_SHORT, spark: 0 },
 ]
 
-export function planLedger(inner: number): Plan {
+// What a surface asks of the plan. `fit` swaps the surface's field widths.
+// `gitMin` is the least width git needs to share the rows. `isFull` keeps only
+// the first geometry, so a surface that clips nothing never draws a band with
+// a short bar or no spark. The terminal passes none of these.
+export type PlanOpts = { fit?: Fit; gitMin?: number; isFull?: boolean }
+
+export function planLedger(inner: number, opts: PlanOpts = {}): Plan {
   // The row starts after one cell of padding.
   const room = inner - 1
+  const gitMin = opts.gitMin ?? GIT_MIN
+  const geoms = (opts.isFull === true ? GEOMS.slice(0, 1) : GEOMS).map((g): Geom => (opts.fit === undefined ? g : { ...g, fit: opts.fit }))
   const left = (g: Geom) => usageWidth(g) + SEP.length + contextWidth(g)
-  for (const g of GEOMS) {
+  for (const g of geoms) {
     const gitWidth = room - left(g) - SEP.length
-    if (gitWidth >= GIT_MIN) return { ...g, isInline: true, gitWidth }
+    if (gitWidth >= gitMin) return { ...g, isInline: true, gitWidth }
   }
-  const g = GEOMS.find(x => left(x) <= room) ?? (GEOMS[GEOMS.length - 1] as Geom)
+  const g = geoms.find(x => left(x) <= room) ?? (geoms[geoms.length - 1] as Geom)
   return { ...g, isInline: false, gitWidth: room }
+}
+
+// The plan options of the desktop: wider fields for the keycaps, the full
+// geometry only, and git in the rows only when its widest row fits whole.
+// The desktop wraps nothing, so a git cell that is too short has to clip.
+export function desktopPlanOpts(d: BandData): PlanOpts {
+  return { fit: DESKTOP_FIT, isFull: true, gitMin: Math.max(GIT_MIN, gitRowWidth(d, DESKTOP_FIT.git)) }
 }
 
 // The ledger rows for a band `inner` cells wide. With room, git shares the
 // two rows as a third column. Without, git takes two rows of its own.
 export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[] {
-  const { Box, Text } = T
-  const plan = planLedger(inner)
+  const { Box } = T
+  const P = primsFor(T, d)
+  const opts = isDesktop(T, d) ? desktopPlanOpts(d) : {}
+  const plan = planLedger(inner, opts)
   const u = d.usage
-  const sep = <Text color={frameColor(d)}>{SEP}</Text>
-  const [gitA, gitB] = gitCells(T, d, plan.gitWidth)
+  const sep = P.vsep()
+  const { a: gitA, b: gitB } = gitCells(T, P, d, plan.gitWidth, { badge: fitOf(plan).git })
   const usageRows = [
-    [windowCell(T, d, '5h', u?.fiveHour, plan), sep, contextCell(T, d, plan)],
-    [windowCell(T, d, '7d', u?.sevenDay, plan), sep, cacheCell(T, d, plan)],
+    [windowCell(T, P, d, '5h', u?.fiveHour, plan), sep, contextCell(T, P, d, plan)],
+    [windowCell(T, P, d, '7d', u?.sevenDay, plan), sep, cacheCell(T, P, d, plan)],
   ]
   const row = (key: string, children: RenderElement[]) => <Box key={key} paddingLeft={1}>{children}</Box>
-  const rules = ledgerRules(inner)
+  const rules = ledgerRules(inner, opts, gitB !== null)
   const rule = (i: number) => {
     const spec = rules[i - 1] as RuleSpec
-    return <Box key={`row-rule-${i}`} paddingLeft={1}>{dashRule(T, d, spec)}</Box>
+    return <Box key={`row-rule-${i}`} paddingLeft={1}>{P.dashRule(spec)}</Box>
   }
   if (plan.isInline) {
+    // With no diff row the second row ends at its cache cell, and the column
+    // line ends at the rule above it.
     return [
       row('row-0', [...(usageRows[0] ?? []), sep, gitA]),
       rule(1),
-      row('row-1', [...(usageRows[1] ?? []), sep, gitB]),
+      row('row-1', gitB === null ? usageRows[1] ?? [] : [...(usageRows[1] ?? []), sep, gitB]),
     ]
   }
   return [
@@ -586,19 +472,20 @@ export function ledgerRows(T: Table, d: BandData, inner: number): RenderElement[
     row('row-1', usageRows[1] ?? []),
     rule(2),
     row('row-2', [gitA]),
-    rule(3),
-    row('row-3', [gitB]),
+    ...(gitB === null ? [] : [rule(3), row('row-3', [gitB])]),
   ]
 }
 
 // The rules between ledger rows for a band `inner` cells wide, top to bottom.
 // Each rule starts under the row padding, so its cell 0 is the row's cell 0.
-export function ledgerRules(inner: number): RuleSpec[] {
-  const plan = planLedger(inner)
+// With `hasGitB` false the git column line ends at the first rule, and the
+// rule closes it with a tee instead of a cross.
+export function ledgerRules(inner: number, opts: PlanOpts = {}, hasGitB = true): RuleSpec[] {
+  const plan = planLedger(inner, opts)
   const first = usageWidth(plan) + 2
   const second = first + SEP.length + contextWidth(plan)
   const width = inner - 1
-  if (plan.isInline) return [{ key: 'rule-1', width, crosses: [{ at: first, glyph: '┼' }, { at: second, glyph: '┼' }] }]
+  if (plan.isInline) return [{ key: 'rule-1', width, crosses: [{ at: first, glyph: '┼' }, { at: second, glyph: hasGitB ? '┼' : '┴' }] }]
   return [
     { key: 'rule-1', width, crosses: [{ at: first, glyph: '┼' }] },
     { key: 'rule-2', width, crosses: [{ at: first, glyph: '┴' }] },

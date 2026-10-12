@@ -11,14 +11,6 @@ export const ACCOUNTS_KEY = 'accounts'
 // a path, since every path is absolute.
 export const NEW_PROFILE = 'new-firefox-profile'
 
-// The list a first run starts from. Paths fill in from the profile names once
-// the profile list is read.
-export const SEED_ACCOUNTS: readonly StatuslineAccount[] = [
-  { email: 'kiriketsuki@gmail.com', profile: 'Original profile', path: '', isWork: false },
-  { email: 'jlim@aurrigo.com', profile: 'Work Claude', path: '', isWork: true },
-  { email: 'limj@aurrigo.com', profile: 'Work Claude 2', path: '', isWork: true },
-]
-
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export function isEmail(text: string): boolean {
