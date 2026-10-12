@@ -125,6 +125,14 @@ test('a contributed item draws in the header on both surfaces, and a press runs 
   await clock.advance(0)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'chrysaki-statusline', surface, component: 'AbovePrompt', props: props(200) })
+    // On the terminal the item sits in the mod row under the header, and one
+    // empty row follows. The desktop keeps it in the header.
+    if (surface === 'terminal') {
+      expect(await ui.find({ key: 'mod-row' })).toBeDefined()
+      expect(await ui.find({ key: 'spacer' })).toBeDefined()
+    } else {
+      expect(await ui.find({ key: 'mod-row' })).toBeUndefined()
+    }
     expect(await ui.find({ key: 'band-tokin-era' })).toBeDefined()
     await ui.press({ key: 'band-tokin-era' })
     await ui.unmount()

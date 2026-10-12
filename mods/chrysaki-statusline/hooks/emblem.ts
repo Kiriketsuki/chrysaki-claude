@@ -5,148 +5,15 @@
 export type EmblemCell = readonly [string, string | null, string | null]
 
 export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
-  "pointy-emerald": [
+  "hex-emerald": [
     [
       [
-        "▄",
-        "#0e4a38",
-        null
-      ],
-      [
-        "🭂",
+        "🭊",
         "#1a8a6a",
         null
       ],
       [
-        "🭍",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "▄",
-        "#14664e",
-        null
-      ]
-    ],
-    [
-      [
-        "🮄",
-        "#0e4a38",
-        null
-      ],
-      [
-        "🭓",
-        "#0e4a38",
-        null
-      ],
-      [
-        "🭞",
-        "#14664e",
-        null
-      ],
-      [
-        "🮄",
-        "#14664e",
-        null
-      ]
-    ]
-  ],
-  "pointy-tri": [
-    [
-      [
-        "▄",
-        "#1c3d7a",
-        null
-      ],
-      [
-        "🭂",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "🭍",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "▄",
-        "#583090",
-        null
-      ]
-    ],
-    [
-      [
-        "🮄",
-        "#1c3d7a",
-        null
-      ],
-      [
-        "🭓",
-        "#1c3d7a",
-        null
-      ],
-      [
-        "🭞",
-        "#583090",
-        null
-      ],
-      [
-        "🮄",
-        "#583090",
-        null
-      ]
-    ]
-  ],
-  "pointy-mono": [
-    [
-      [
-        "▅",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "🭂",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "🭍",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "▅",
-        "#1a8a6a",
-        null
-      ]
-    ],
-    [
-      [
-        "🮄",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "🭓",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "🭞",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "🮄",
-        "#1a8a6a",
-        null
-      ]
-    ]
-  ],
-  "cube-emerald": [
-    [
-      [
-        "",
+        "🭁",
         "#1a8a6a",
         null
       ],
@@ -156,227 +23,29 @@ export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
         null
       ],
       [
-        "",
-        "#fbb13c",
-        "#1a8a6a"
-      ],
-      [
-        "",
-        "#14664e",
-        "#fbb13c"
-      ],
-      [
-        "█",
-        "#14664e",
-        null
-      ],
-      [
-        "",
-        "#14664e",
-        null
-      ]
-    ],
-    [
-      [
-        "",
-        "#0e4a38",
-        null
-      ],
-      [
-        "█",
-        "#0e4a38",
-        null
-      ],
-      [
-        "",
-        "#fbb13c",
-        "#0e4a38"
-      ],
-      [
-        "",
-        "#14664e",
-        "#fbb13c"
-      ],
-      [
-        "█",
-        "#14664e",
-        null
-      ],
-      [
-        "",
-        "#14664e",
-        null
-      ]
-    ]
-  ],
-  "cube-tri": [
-    [
-      [
-        "",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
-        "#fbb13c",
-        "#1a8a6a"
-      ],
-      [
-        "",
-        "#583090",
-        "#fbb13c"
-      ],
-      [
-        "█",
-        "#583090",
-        null
-      ],
-      [
-        "",
-        "#583090",
-        null
-      ]
-    ],
-    [
-      [
-        "",
-        "#1c3d7a",
-        null
-      ],
-      [
-        "█",
-        "#1c3d7a",
-        null
-      ],
-      [
-        "",
-        "#fbb13c",
-        "#1c3d7a"
-      ],
-      [
-        "",
-        "#583090",
-        "#fbb13c"
-      ],
-      [
-        "█",
-        "#583090",
-        null
-      ],
-      [
-        "",
-        "#583090",
-        null
-      ]
-    ]
-  ],
-  "cube-mono": [
-    [
-      [
-        "",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
-        "#fbb13c",
-        "#1a8a6a"
-      ],
-      [
-        "",
-        "#1a8a6a",
-        "#fbb13c"
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
-        "#1a8a6a",
-        null
-      ]
-    ],
-    [
-      [
-        "",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
-        "#fbb13c",
-        "#1a8a6a"
-      ],
-      [
-        "",
-        "#1a8a6a",
-        "#fbb13c"
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
-        "#1a8a6a",
-        null
-      ]
-    ]
-  ],
-  "cube-emerald-plain": [
-    [
-      [
-        "",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
+        "🭊",
         "#14664e",
         "#1a8a6a"
       ],
       [
-        "█",
+        "🭌",
         "#14664e",
         null
       ],
       [
-        "",
+        "🬿",
         "#14664e",
         null
       ]
     ],
     [
       [
-        "",
+        "🭥",
+        "#0e4a38",
+        null
+      ],
+      [
+        "🭒",
         "#0e4a38",
         null
       ],
@@ -386,31 +55,31 @@ export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
         null
       ],
       [
-        "█",
-        "#0e4a38",
-        null
-      ],
-      [
-        "",
+        "🭥",
         "#14664e",
         "#0e4a38"
       ],
       [
-        "█",
+        "🭝",
         "#14664e",
         null
       ],
       [
-        "",
+        "🭚",
         "#14664e",
         null
       ]
     ]
   ],
-  "cube-tri-plain": [
+  "hex-tri": [
     [
       [
-        "",
+        "🭊",
+        "#1a8a6a",
+        null
+      ],
+      [
+        "🭁",
         "#1a8a6a",
         null
       ],
@@ -420,29 +89,29 @@ export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
         null
       ],
       [
-        "█",
-        "#1a8a6a",
-        null
-      ],
-      [
-        "",
+        "🭊",
         "#583090",
         "#1a8a6a"
       ],
       [
-        "█",
+        "🭌",
         "#583090",
         null
       ],
       [
-        "",
+        "🬿",
         "#583090",
         null
       ]
     ],
     [
       [
-        "",
+        "🭥",
+        "#1c3d7a",
+        null
+      ],
+      [
+        "🭒",
         "#1c3d7a",
         null
       ],
@@ -452,31 +121,31 @@ export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
         null
       ],
       [
-        "█",
-        "#1c3d7a",
-        null
-      ],
-      [
-        "",
+        "🭥",
         "#583090",
         "#1c3d7a"
       ],
       [
-        "█",
+        "🭝",
         "#583090",
         null
       ],
       [
-        "",
+        "🭚",
         "#583090",
         null
       ]
     ]
   ],
-  "cube-mono-plain": [
+  "hex-mono": [
     [
       [
-        "",
+        "🭊",
+        "#1a8a6a",
+        null
+      ],
+      [
+        "🭁",
         "#1a8a6a",
         null
       ],
@@ -491,24 +160,24 @@ export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
         null
       ],
       [
-        "",
-        "#1a8a6a",
-        "#1a8a6a"
-      ],
-      [
-        "█",
+        "🭌",
         "#1a8a6a",
         null
       ],
       [
-        "",
+        "🬿",
         "#1a8a6a",
         null
       ]
     ],
     [
       [
-        "",
+        "🭥",
+        "#1a8a6a",
+        null
+      ],
+      [
+        "🭒",
         "#1a8a6a",
         null
       ],
@@ -523,17 +192,12 @@ export const EMBLEMS: Record<string, readonly (readonly EmblemCell[])[]> = {
         null
       ],
       [
-        "",
-        "#1a8a6a",
-        "#1a8a6a"
-      ],
-      [
-        "█",
+        "🭝",
         "#1a8a6a",
         null
       ],
       [
-        "",
+        "🭚",
         "#1a8a6a",
         null
       ]

@@ -4,8 +4,9 @@
 // band folder is `$CHRYSAKI_BAND_DIR` when that is set. Otherwise it is
 // `chrysaki-band` under the first of XDG_RUNTIME_DIR, TMPDIR, TEMP and TMP
 // that is set, else under `/tmp`. The chrysaki-statusline mod lists that
-// folder every few seconds and draws the items as segments of the band
-// header. See README.md beside this file.
+// folder every few seconds. It draws the items as segments in a row under
+// the band header on the terminal, and in the header on the desktop. See
+// README.md beside this file.
 
 // How an item reads. The statusline picks the ground and the lettering.
 // It holds the pair to a contrast of at least 4.5 to 1.
