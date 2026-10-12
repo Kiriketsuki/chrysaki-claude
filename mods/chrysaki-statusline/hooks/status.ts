@@ -15,8 +15,36 @@ function impactOf(v: unknown): Impact {
   return typeof v === 'string' && v in RANK ? (v as Impact) : 'minor'
 }
 
-// Null when no incident is open, or when the body does not parse. The badge
-// then stays hidden: a status page that fails to answer is no outage.
+// Components whose trouble reaches a Claude Code session. An incident that
+// names no component counts too, because the page does not say what it hits.
+const RELEVANT = /claude code|claude api|api\.anthropic\.com/i
+// An incident under watch is past its worst, so it reads one level lower.
+const WATCHED: Record<Impact, Impact> = { none: 'none', minor: 'minor', major: 'minor', critical: 'major' }
+
+type Incident = { name: string; impact: Impact; url: string; components: string[]; isMonitoring: boolean }
+
+function incidentOf(raw: unknown): Incident {
+  const i = (typeof raw === 'object' && raw !== null ? raw : {}) as { name?: unknown; impact?: unknown; shortlink?: unknown; status?: unknown; components?: unknown }
+  const components = Array.isArray(i.components)
+    ? i.components.flatMap(c => {
+      const name = (c as { name?: unknown } | null)?.name
+      return typeof name === 'string' ? [name] : []
+    })
+    : []
+  const isMonitoring = i.status === 'monitoring'
+  const impact = impactOf(i.impact)
+  return {
+    name: typeof i.name === 'string' ? i.name : 'incident',
+    impact: isMonitoring ? WATCHED[impact] : impact,
+    url: typeof i.shortlink === 'string' ? i.shortlink : STATUS_PAGE,
+    components,
+    isMonitoring,
+  }
+}
+
+// Null when no open incident touches Claude Code, or when the body does not
+// parse. The badge then stays hidden: a status page that fails to answer is
+// no outage.
 export function parseIncidents(text: string): StatuslineOutage | null {
   let body: unknown
   try {
@@ -25,14 +53,21 @@ export function parseIncidents(text: string): StatuslineOutage | null {
     return null
   }
   const list = (body as { incidents?: unknown })?.incidents
-  if (!Array.isArray(list) || list.length === 0) return null
+  if (!Array.isArray(list)) return null
   const incidents = list
-    .map(i => i as { name?: unknown; impact?: unknown; shortlink?: unknown })
-    .map(i => ({ name: typeof i.name === 'string' ? i.name : 'incident', impact: impactOf(i.impact), url: typeof i.shortlink === 'string' ? i.shortlink : STATUS_PAGE }))
+    .map(incidentOf)
+    .filter(i => i.components.length === 0 || i.components.some(c => RELEVANT.test(c)))
     .sort((a, b) => RANK[b.impact] - RANK[a.impact])
   const top = incidents[0]
   if (top === undefined) return null
   // An incident the page rates "none" is maintenance or a notice. It still
   // shows, at the lowest level.
-  return { impact: top.impact === 'none' ? 'minor' : top.impact, name: top.name, count: incidents.length, url: top.url }
+  return {
+    impact: top.impact === 'none' ? 'minor' : top.impact,
+    name: top.name,
+    count: incidents.length,
+    url: top.url,
+    components: top.components,
+    isMonitoring: top.isMonitoring,
+  }
 }

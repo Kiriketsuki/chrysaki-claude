@@ -4,6 +4,7 @@ import { withOAuth } from '../hooks/limits'
 import { fetchLimits } from '../hooks/live'
 import type { LiveHost } from '../hooks/live'
 import { parseOAuthUsage } from '../hooks/oauth'
+import { outageCard } from '../hooks/header'
 import { parseIncidents } from '../hooks/status'
 import type { LimitsFetch } from '../types'
 
@@ -106,10 +107,43 @@ describe('the status page', () => {
         { name: 'API errors', impact: 'major', shortlink: 'https://stspg.io/b' },
       ],
     })
-    expect(parseIncidents(body)).toEqual({ impact: 'major', name: 'API errors', count: 2, url: 'https://stspg.io/b' })
+    expect(parseIncidents(body)).toEqual({ impact: 'major', name: 'API errors', count: 2, url: 'https://stspg.io/b', components: [], isMonitoring: false })
+  })
+
+  test('an incident that touches only the Console shows no badge', async () => {
+    const body = JSON.stringify({
+      incidents: [{ name: 'Elevated errors on platform.claude.com', impact: 'major', status: 'monitoring', components: [{ name: 'Claude Console (platform.claude.com)' }] }],
+    })
+    expect(parseIncidents(body)).toBe(null)
+  })
+
+  test('an incident on Claude Code or the API counts, and the others do not', async () => {
+    const body = JSON.stringify({
+      incidents: [
+        { name: 'Console errors', impact: 'critical', status: 'investigating', components: [{ name: 'Claude Console (platform.claude.com)' }] },
+        { name: 'Slow tool calls', impact: 'minor', status: 'identified', components: [{ name: 'Claude Code' }] },
+        { name: 'API errors', impact: 'major', status: 'investigating', components: [{ name: 'claude.ai' }, { name: 'Claude API (api.anthropic.com)' }] },
+      ],
+    })
+    expect(parseIncidents(body)).toEqual({ impact: 'major', name: 'API errors', count: 2, url: 'https://status.claude.com', components: ['claude.ai', 'Claude API (api.anthropic.com)'], isMonitoring: false })
+  })
+
+  test('an incident under watch reads one level lower', async () => {
+    const watched = (impact: string) => parseIncidents(JSON.stringify({ incidents: [{ name: 'API errors', impact, status: 'monitoring', components: [{ name: 'Claude API (api.anthropic.com)' }] }] }))
+    expect(watched('critical')?.impact).toBe('major')
+    expect(watched('major')?.impact).toBe('minor')
+    expect(watched('minor')?.impact).toBe('minor')
+    expect(watched('major')?.isMonitoring).toBe(true)
   })
 
   test('a notice rated none still shows as minor', async () => {
     expect(parseIncidents('{"incidents":[{"name":"Maintenance","impact":"none"}]}')?.impact).toBe('minor')
+  })
+})
+
+describe('the outage card', () => {
+  test('names the components and the watch', async () => {
+    expect(outageCard({ impact: 'minor', name: 'API errors', count: 1, url: '', components: ['Claude API (api.anthropic.com)'], isMonitoring: true })).toBe('API errors (Claude API (api.anthropic.com), monitoring)')
+    expect(outageCard({ impact: 'major', name: 'Outage', count: 1, url: '', components: [], isMonitoring: false })).toBe('Outage (no component named)')
   })
 })
