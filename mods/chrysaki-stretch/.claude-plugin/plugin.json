@@ -1,0 +1,21 @@
+{
+  "name": "chrysaki-stretch",
+  "version": "0.1.0",
+  "description": "Stretchtext replies in the Chrysaki look: short by default, each phrase grows in place when you click it",
+  "author": {
+    "name": "Kiriketsuki"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "foldTools": {
+      "type": "string",
+      "title": "Fold tool calls",
+      "description": "Fold a finished group of tool calls to its one-line summary, with a link to open it",
+      "default": "on",
+      "options": [
+        "on",
+        "off"
+      ]
+    }
+  }
+}
