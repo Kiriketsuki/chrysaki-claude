@@ -52,6 +52,37 @@ test('a relay event is not a message between sessions', async ($, on) => {
   await ui.unmount()
 })
 
+test('/comms reads the transcript file, with the time of each message', async ($, on) => {
+  engine(on)
+  on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+  on('session.id', async () => ({ value: 'session-1' }))
+  on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? '/home/dev' : undefined }))
+  const argvs: (readonly string[])[] = []
+  on('process.run', async (_$, e) => {
+    argvs.push(e.argv)
+    const events = [{ kind: 'in', at: new Date(2026, 9, 16, 9, 30).getTime(), text: envelope('before the compaction') }]
+    return { value: { exitCode: 0, stdout: JSON.stringify(events), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.command.run({ command: 'comms', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true } } as never)
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ text: 'before the compaction' })).toBeDefined()
+  expect(await ui.find({ text: /09:30/ })).toBeDefined()
+  expect(argvs[0]?.slice(2)).toEqual(['session-1', '/home/dev/.claude'])
+  await ui.unmount()
+})
+
+test('without the transcript file, the pane says what it shows instead', async ($, on) => {
+  engine(on)
+  on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+  on('session.id', async () => ({ value: 'session-1' }))
+  on('env.get', async () => ({ value: undefined }))
+  on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: 'no transcript for session session-1', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.command.run({ command: 'comms', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true } } as never)
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ text: /no transcript for session session-1/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('/comms reads the transcript, and a peer key filters the log', async ($, on) => {
   engine(on, [
     { role: 'user', content: [{ type: 'text', text: `Another Claude session sent a message:\n${envelope('from the transcript')}` }] },

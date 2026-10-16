@@ -2,12 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionReceiveOrigin } from 'claude-code'
 
 import type { CommsMessage } from '../types'
-import { appended, fromTranscript, merged, named, peers, received, sent } from './log'
+import { appended, fromEvents, fromTranscript, merged, named, peers, received, sent } from './log'
+import type { TranscriptEvent } from './log'
 import { drawPane } from './view'
 import type { Act } from './view'
 
 const PANE = 'chrysaki-comms'
 const DEFAULT_LIMIT = 200
+const READ_TIMEOUT_MS = 20_000
 
 const live = atom({ plugin: 'chrysaki-comms', key: 'live' } as const, [] as CommsMessage[])
 const history = atom({ plugin: 'chrysaki-comms', key: 'history' } as const, [] as CommsMessage[])
@@ -38,11 +40,34 @@ async function record($: EngineInterface, rows: () => Promise<CommsMessage[]>): 
   }
 }
 
+// Reads the transcript file through hooks/transcript.py. A transcript can be
+// far over the 4 MiB that $.fs.read takes, so the script streams it.
+async function fileRows($: EngineInterface): Promise<CommsMessage[]> {
+  const id = await $.session.id()
+  const home = await $.env.get('HOME')
+  const dirs = [await $.env.get('CLAUDE_CONFIG_DIR'), home === undefined ? undefined : `${home}/.claude`]
+    .filter((dir): dir is string => dir !== undefined && dir !== '')
+  const ran = await $.process.run(['python3', `${$.plugin.root}/hooks/transcript.py`, id, ...dirs], { timeoutMs: READ_TIMEOUT_MS })
+  if (ran.isStdoutTruncated) throw new Error('the transcript script wrote over 4 MiB')
+  if (ran.exitCode !== 0) throw new Error(ran.stderr.trim() || `the transcript script exited with ${ran.exitCode}`)
+  return fromEvents(JSON.parse(ran.stdout) as TranscriptEvent[])
+}
+
+// Falls back to the conversation in Messages API form. That form starts at the
+// last compaction summary and keeps no time on a message.
 async function readHistory($: EngineInterface): Promise<void> {
+  try {
+    const rows = await fileRows($)
+    await update($, history, () => rows)
+    await update($, note, () => null)
+    return
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    await update($, note, () => `The transcript file was not read (${why}). The pane shows the conversation since the last compaction, with no times.`)
+  }
   try {
     const rows = fromTranscript(await $.session.messages({ as: 'api' }))
     await update($, history, () => rows)
-    await update($, note, () => null)
   } catch (error) {
     await update($, note, () => `Transcript read failed: ${error instanceof Error ? error.message : String(error)}`)
   }

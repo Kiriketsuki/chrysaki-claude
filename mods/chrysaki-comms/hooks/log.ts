@@ -78,6 +78,24 @@ export function fromTranscript(messages: readonly ApiMessage[]): CommsMessage[] 
   )
 }
 
+// One event that hooks/transcript.py prints from the transcript file.
+export type TranscriptEvent =
+  | { kind: 'in'; at: number | null; text: string }
+  | { kind: 'out'; at: number | null; id: string; to: string; message: string }
+  | { kind: 'error'; id: string; text: string }
+
+// The transcript file keeps a time on each row, every row from before a
+// compaction, and each message delivered in the middle of a turn.
+export function fromEvents(events: readonly TranscriptEvent[]): CommsMessage[] {
+  const errors = new Map<string, string>()
+  for (const e of events) if (e.kind === 'error') errors.set(e.id, e.text || 'not delivered')
+  return events.flatMap(e => {
+    if (e.kind === 'in') return envelopes(e.text).map(envelope => fromEnvelope(envelope, e.at))
+    if (e.kind === 'out') return [sent(e.to, e.message, e.at, errors.get(e.id) ?? null)]
+    return []
+  })
+}
+
 const keyOf = (m: CommsMessage): string => `${m.direction}\n${m.peer}\n${m.text}`
 
 // The transcript holds the live messages too, after the hooks saw them. Each
@@ -92,7 +110,10 @@ export function merged(history: readonly CommsMessage[], live: readonly CommsMes
     pending.set(keyOf(m), count - 1)
     return false
   })
-  return [...older, ...live]
+  const all = [...older, ...live]
+  // With a time on every message, time orders them. A message that the hooks
+  // never saw, such as one approved after a hold, then lands in its place.
+  return all.every(m => m.at !== null) ? all.sort((a, b) => (a.at ?? 0) - (b.at ?? 0)) : all
 }
 
 // Names each uds: address after the from-name that a received message carried
