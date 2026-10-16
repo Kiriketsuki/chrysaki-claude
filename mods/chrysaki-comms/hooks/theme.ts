@@ -5,8 +5,11 @@ export const C = {
   abyss: '#0f1117',
   surface: '#1c1f2b',
   raised: '#252836',
+  border: '#363a4f',
   emeraldLt: '#1a8a6a',
+  teal: '#197278',
   tealLt: '#20969c',
+  blonde: '#fbb13c',
   blondeLt: '#fcc96a',
   errorLt: '#b53f4a',
   text: '#e0e2ea',
@@ -18,3 +21,7 @@ export const HEX = '⬢'
 export const OUT = '→'
 export const IN = '←'
 export const CROSS = '✗'
+export const DOT = '·'
+export const SPARK = '✦'
+export const DOWN = '↓'
+export const RULE = '─'

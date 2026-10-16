@@ -6,7 +6,7 @@ Mods are Claude Code plugins made of function hooks. They run inside the session
 |:---|:---|
 | [`chrysaki-statusline`](chrysaki-statusline/) | Draws the Chrysaki statusline as a band above the prompt, with a prompt cache warning, handoff and resume keys, and rate limits that hold between sessions |
 | [`chrysaki-insight`](chrysaki-insight/) | Opens `/insight`, a pane with tabs for the context breakdown, the cost of each request, and running tools and subagents |
-| [`chrysaki-comms`](chrysaki-comms/) | Opens `/comms`, a pane with the full log of messages between this session and other Claude sessions, by peer |
+| [`chrysaki-comms`](chrysaki-comms/) | Opens `/comms`, a pane with the log of messages between this session and other Claude sessions. A compact view with Haiku summaries, a verbose view with the exact words, and a pane that follows the newest message |
 | [`chrysaki-mcp`](chrysaki-mcp/) | Opens `/mcp-panel`, a pane with each MCP server, its tools and a key to turn it on or off, and keeps on-demand servers such as Atlassian off at the start of every session |
 | [`chrysaki-lag`](chrysaki-lag/) | Shows why the machine lags, from pressure stall data, and warns about disk, memory, heat and system faults, with header badges, a `/lag` pane of warnings, causes and stop keys, and desktop notices |
 | [`chrysaki-stretch`](chrysaki-stretch/) | Draws replies as stretchtext: short by default, and each linked phrase grows in place on a click. My own version of [cc-stretch](https://github.com/pro-vi/cc-stretch) |
