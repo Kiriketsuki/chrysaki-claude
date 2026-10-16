@@ -33,9 +33,17 @@ export const register: Register = (on, options) => {
     return { ...answer, displayContent: shown }
   })
 
+  // Where an organization manages Claude Code, prompt.compose skips a plugin that the person
+  // installed, but prompt.submit runs. So until prompt.compose runs, the guide goes in the
+  // context of a prompt instead: once, and again when the transcript gets shorter. A compaction
+  // or a /clear makes it shorter and drops the guide. session.compact skips the plugin too.
+  let composeRan = false
+  let guideSentAt: number | undefined
+
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (e.surfaces.length === 0) return composed
+    composeRan = true
 
     return {
       sections: [
@@ -48,13 +56,21 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind !== 'composer') return next(e)
 
+    const messages = await $.session.messages()
+    const guideGone = guideSentAt === undefined || messages.length < guideSentAt
+    const draws = !composeRan && guideGone && (await $.session.surfaces().catch(() => [])).length > 0
+    const guide = draws ? [GUIDE] : []
+    if (draws) guideSentAt = messages.length
+    else if (guideSentAt !== undefined) guideSentAt = Math.max(guideSentAt, messages.length)
     const opened = await read($, seen)
-    const written = stretches(parse(lastReply(await $.session.messages())))
+    const written = stretches(parse(lastReply(messages)))
       .filter(isOpenable)
       .map(stretch => stretch.short.trim())
     const unopened = written.filter(short => !opened.includes(short))
     await update($, seen, () => [])
-    if (opened.length === 0 && unopened.length === 0) return next(e)
+    if (opened.length === 0 && unopened.length === 0) {
+      return guide.length === 0 ? next(e) : next({ ...e, context: [...(e.context ?? []), ...guide] })
+    }
 
     const quote = (list: string[]) => list.map(s => `"${s}"`).join(', ')
     // A prompt cannot tell whether the reply was drawn where clicks land, so with no clicks the
@@ -64,7 +80,7 @@ export const register: Register = (on, options) => {
         ? `Stretchtext: since your last reply the reader opened ${quote(opened)}.${unopened.length > 0 ? ` They did not open ${quote(unopened)}.` : ''}`
         : 'Stretchtext: the plugin recorded no click on a stretch of your last reply. Where clicks do not reach the plugin (the classic renderer, other apps), the reader saw every stretch open.'
 
-    return next({ ...e, context: [...(e.context ?? []), note] })
+    return next({ ...e, context: [...(e.context ?? []), ...guide, note] })
   }).catch(($, e, next) => next(e))
 
   // Tool calls fold to Claude Code's own one-line summary of their group once

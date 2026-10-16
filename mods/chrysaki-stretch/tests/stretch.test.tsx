@@ -1,8 +1,9 @@
-import type { On } from 'claude-code'
+import type { On, SessionMessage } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { grow } from '../hooks/grow'
+import { GUIDE } from '../hooks/guide'
 import { layout, link, linkAt, widthOf } from '../hooks/layout'
 import { hideLongForms, paragraphsOf, parse, stretches } from '../hooks/parse'
 import { CODE, LINK } from '../hooks/theme'
@@ -309,6 +310,54 @@ test('the next prompt tells the model which stretches were opened and which not'
     'Stretchtext: the plugin recorded no click on a stretch of your last reply. Where clicks do not reach the plugin (the classic renderer, other apps), the reader saw every stretch open.',
   ])
   await ui.unmount()
+})
+
+describe('where prompt.compose does not run', () => {
+  const turn = (): SessionMessage[] => [
+    { role: 'user', text: 'why?', toolUses: [] },
+    { role: 'assistant', text: 'Because.', toolUses: [] },
+  ]
+  const submitted = (on: On, transcript: { length: number } = { length: 0 }) => {
+    const contexts: (readonly string[] | undefined)[] = []
+    on('session.surfaces', () => ({ value: ['terminal'] }))
+    on('session.messages', () => ({ value: Array.from({ length: transcript.length / 2 }, turn).flat() }))
+    on('prompt.submit', ($, e) => {
+      contexts.push(e.context)
+      return { text: e.text, context: e.context }
+    })
+    return contexts
+  }
+  const submit = ($: Engine) => $.prompt.submit({ text: 'ok', wait: false, origin: { kind: 'composer' } })
+
+  test('the first prompt carries the guide, and the next prompts do not', async ($, on) => {
+    const transcript = { length: 0 }
+    const contexts = submitted(on, transcript)
+    await submit($)
+    transcript.length = 2
+    await submit($)
+    transcript.length = 4
+    await submit($)
+    expect(contexts).toEqual([[GUIDE], undefined, undefined])
+  })
+
+  test('a shorter transcript, as after a compaction, sends the guide again', async ($, on) => {
+    const transcript = { length: 4 }
+    const contexts = submitted(on, transcript)
+    await submit($)
+    transcript.length = 6
+    await submit($)
+    transcript.length = 2
+    await submit($)
+    expect(contexts).toEqual([[GUIDE], undefined, [GUIDE]])
+  })
+
+  test('once prompt.compose has run, no prompt carries the guide', async ($, on) => {
+    const contexts = submitted(on)
+    on('prompt.compose', () => ({ sections: [] }))
+    await $.prompt.compose({ ...COMPOSE, surfaces: ['terminal'] })
+    await submit($)
+    expect(contexts).toEqual([undefined])
+  })
 })
 
 describe('tool calls', () => {

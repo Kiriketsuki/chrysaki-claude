@@ -27,7 +27,7 @@ This mod is my own version of [pro-vi/cc-stretch](https://github.com/pro-vi/cc-s
 - Clicks need the fullscreen renderer. Run `/tui fullscreen`. On the classic renderer and in the desktop app, every stretch shows open.
 - Claude writes every level up front. A reply costs about as many tokens as before.
 - The `{{short|long}}` markup shows as raw text where the mod is not loaded.
-- Where an organization manages Claude Code, the `prompt.compose` and `classic.MessageDisplay` hooks run only for a plugin that the managed settings list. Without the guide, Claude writes no stretches.
+- Where an organization manages Claude Code, the `prompt.compose` and `classic.MessageDisplay` hooks run only for a plugin that the managed settings list. The `prompt.submit` hook then sends the guide with your first prompt, and again after a compaction or `/clear`. While a reply streams, its raw `{{short|long}}` markup shows until the reply is complete.
 
 ## Options
 
