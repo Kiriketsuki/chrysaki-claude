@@ -1,0 +1,17 @@
+{
+  "name": "chrysaki-comms",
+  "version": "0.1.0",
+  "description": "A pane in the Chrysaki look with the full log of messages between this session and other Claude sessions",
+  "author": {
+    "name": "Kiriketsuki"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "maxMessages": {
+      "type": "string",
+      "title": "Messages shown",
+      "description": "How many of the latest messages the pane draws. The pane says how many earlier messages it leaves out",
+      "default": "200"
+    }
+  }
+}
