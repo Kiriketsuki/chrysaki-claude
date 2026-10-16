@@ -1,6 +1,6 @@
 {
   "name": "chrysaki-comms",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A pane in the Chrysaki look with the full log of messages between this session and other Claude sessions",
   "author": {
     "name": "Kiriketsuki"
@@ -12,6 +12,18 @@
       "title": "Messages shown",
       "description": "How many of the latest messages the pane draws. The pane says how many earlier messages it leaves out",
       "default": "200"
+    },
+    "view": {
+      "type": "string",
+      "title": "Start view",
+      "description": "compact shows one line for each message, with a model summary of a long message. verbose shows the exact words. The v key switches",
+      "default": "compact"
+    },
+    "summaryModel": {
+      "type": "string",
+      "title": "Summary model",
+      "description": "The model that writes the compact summaries, as an alias or a full id. off sends no message to a model",
+      "default": "claude-haiku-5-5"
     }
   }
 }

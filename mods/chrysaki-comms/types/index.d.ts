@@ -1,5 +1,12 @@
 export type CommsDirection = 'in' | 'out'
 
+// How the pane draws the log.
+export type CommsView =
+  // One line for each message: a model summary of a long message.
+  | 'compact'
+  // The exact words of each message.
+  | 'verbose'
+
 // One message between this session and another session or agent.
 export type CommsMessage = {
   direction: CommsDirection
@@ -26,6 +33,16 @@ declare module 'claude-code' {
       // The peer that the pane shows, or null for every peer.
       filter: string | null
       note: string | null
+      // The view that a key chose, or null for the view option.
+      view: CommsView | null
+      // True while the pane scrolls to each new message.
+      follow: boolean
+      // The model summary of each long message, by summaryKey of its text.
+      summaries: Record<string, string>
+      // True while a summary call runs.
+      summarizing: boolean
+      // Why the last summary call wrote nothing, or null.
+      summaryNote: string | null
     }
   }
 }

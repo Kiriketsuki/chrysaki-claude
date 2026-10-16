@@ -28,11 +28,23 @@ test('a sent and a received message show in full, with direction, peer and time'
   await $.session.send({ to: 'var-mini', text: LONG, origin: { kind: 'model' } })
   await $.session.receive({ origin: { kind: 'peer' }, text: envelope('ack, sending now') })
   const ui = await $.ui.mount(PANE)
+  await ui.press({ key: 'opt-v' })
   expect(await ui.find({ text: /→ var-mini/ })).toBeDefined()
   expect(await ui.find({ text: /14:02/ })).toBeDefined()
   expect(await ui.find({ text: LONG })).toBeDefined()
   expect(await ui.find({ text: /← orchestrator/ })).toBeDefined()
   expect(await ui.find({ text: 'ack, sending now' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the compact view shows a short message whole and the first line of a long one', async ($, on) => {
+  engine(on)
+  await $.session.send({ to: 'var-mini', text: LONG, origin: { kind: 'model' } })
+  await $.session.receive({ origin: { kind: 'peer' }, text: envelope('ack, sending now') })
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ text: 'ack, sending now' })).toBeDefined()
+  expect(await ui.find({ text: LONG })).toBeUndefined()
+  expect(await ui.find({ text: /This is for ADA 4/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -99,5 +111,63 @@ test('/comms reads the transcript, and a peer key filters the log', async ($, on
   expect(await ui.find({ text: 'to var-mini' })).toBeUndefined()
   await ui.press({ key: 'peer-*' })
   expect(await ui.find({ text: 'to var-mini' })).toBeDefined()
+  await ui.unmount()
+})
+
+// The pieces that /comms needs to open the pane and read a transcript file.
+function opener(on: On, events: unknown[]) {
+  on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+  on('session.id', async () => ({ value: 'session-1' }))
+  on('env.get', async () => ({ value: undefined }))
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: JSON.stringify(events), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+}
+
+const OPEN = { command: 'comms', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true } } as never
+
+test('the compact view asks Haiku for a one-line summary of each long message', async ($, on) => {
+  engine(on)
+  opener(on, [{ kind: 'in', at: new Date(2026, 9, 16, 9, 30).getTime(), text: envelope(LONG) }])
+  const asked: { model: string; prompt: string }[] = []
+  on('model.complete', async (_$, e) => {
+    asked.push({ model: e.model, prompt: e.prompt })
+    return { value: { isAnswered: true, text: '["ADA 4 needs the wide frame to alternate"]', usage: {} } } as never
+  })
+  await $.command.run(OPEN)
+  const ui = await $.ui.mount(PANE)
+  // The summary call runs in the background. A redraw waits for it.
+  await ui.redraw()
+  expect(await ui.find({ text: 'ADA 4 needs the wide frame to alternate' })).toBeDefined()
+  expect(asked.map(a => a.model)).toEqual(['claude-haiku-5-5'])
+  expect(asked[0]?.prompt).toContain('<message index="1" from="orchestrator">')
+
+  await ui.press({ key: 'opt-v' })
+  expect(await ui.find({ text: LONG })).toBeDefined()
+  expect(await ui.find({ text: 'ADA 4 needs the wide frame to alternate' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a failed summary call leaves a note and the first line', async ($, on) => {
+  engine(on)
+  opener(on, [{ kind: 'in', at: null, text: envelope(LONG) }])
+  on('model.complete', async () => ({ value: { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} } }) as never)
+  await $.command.run(OPEN)
+  const ui = await $.ui.mount(PANE)
+  // The summary call runs in the background. A redraw waits for it.
+  await ui.redraw()
+  expect(await ui.find({ text: /claude-haiku-5-5 wrote no summaries: API error 529 \(overloaded\)/ })).toBeDefined()
+  expect(await ui.find({ text: /This is for ADA 4/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('f pauses the pane at its place and turns follow back on', async ($, on) => {
+  engine(on)
+  opener(on, [])
+  await $.command.run(OPEN)
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ text: /↓ follow/ })).toBeDefined()
+  await ui.press({ key: 'opt-f' })
+  expect(await ui.find({ text: /paused/ })).toBeDefined()
+  await ui.press({ key: 'opt-f' })
+  expect(await ui.find({ text: /↓ follow/ })).toBeDefined()
   await ui.unmount()
 })
