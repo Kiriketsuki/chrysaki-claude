@@ -1,0 +1,17 @@
+{
+  "name": "chrysaki-mcp",
+  "version": "0.1.0",
+  "description": "An MCP panel in the Chrysaki look: each server, its tools and a key to turn it on or off, with on-demand servers that start off in every session",
+  "author": {
+    "name": "Kiriketsuki"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "onDemand": {
+      "type": "string",
+      "title": "On-demand servers",
+      "description": "MCP server names, separated by commas. The mod turns each one off at the start of every session. Turn one on in /mcp-panel when you need it",
+      "default": "mcp-atlassian"
+    }
+  }
+}
