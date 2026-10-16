@@ -17,7 +17,7 @@ In the pane, `0` shows every peer, and `1` to `9` show one peer each, the latest
 
 1. A `session.send` hook logs each message that this session sends, with its time. A send that fails shows why.
 2. A `session.receive` hook logs each message from another session or agent, with its time. A relay event, a trigger or a Remote Control prompt is not logged.
-3. When the pane opens, and at the end of each turn while it shows, `hooks/transcript.py` reads the session's transcript file. The file keeps a time on each message, the messages from before a compaction, each message delivered in the middle of a turn, and each message that you approved after a hold. The script reads a 78 MB transcript in about a quarter of a second.
+3. When the pane opens, and at the end of each turn while it shows, `hooks/transcript.py` reads the session's transcript file. The file keeps a time on each message and the messages from before a compaction. It also keeps each message delivered in the middle of a turn, and each message that you approved after a hold. The script reads a 78 MB transcript in about a quarter of a second.
 4. Without `python3` or the transcript file, the mod reads the conversation in Messages API form instead, and the pane says so. That form starts at the last compaction summary and keeps no time on a message.
 5. Each sender address takes the `from-name` of its envelope, so a reply sent to an address joins the thread of that name.
 
