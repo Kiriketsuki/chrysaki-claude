@@ -121,10 +121,10 @@ function topOf(causes: readonly Cause[]): LagTop[] {
 }
 
 // A desktop notice. It waits for a click, and `open` opens the pane in this
-// session.
-async function notice($: EngineInterface, title: string, body: string): Promise<void> {
+// session. The kind picks the notice's replace tag, urgency and timeout.
+async function notice($: EngineInterface, title: string, body: string, kind: 'lag' | 'warn'): Promise<void> {
   try {
-    const r = await $.process.run([`${$.plugin.root}/bin/lag-notify`, title, body], { timeoutMs: NOTICE_WAIT_MS })
+    const r = await $.process.run([`${$.plugin.root}/bin/lag-notify`, title, body, kind], { timeoutMs: NOTICE_WAIT_MS })
     if (r.stdout.trim() === 'open') await openPane($, null)
   } catch (error) {
     log($, `notice ended: ${message(error)}`)
@@ -134,11 +134,11 @@ async function notice($: EngineInterface, title: string, body: string): Promise<
 function lagNotice($: EngineInterface, f: LagFile): Promise<void> {
   const title = `Machine ${f.level}: ${f.bound === 'none' ? 'no clear cause' : `${f.bound}-bound`}`
   const body = f.top.length === 0 ? 'No process stands out.' : f.top.slice(0, 2).map(t => `${t.label}: ${t.detail}`).join('\n')
-  return notice($, title, body)
+  return notice($, title, body, 'lag')
 }
 
 function warnNotice($: EngineInterface, due: readonly Warning[]): Promise<void> {
-  return notice($, `Machine warning: ${due[0]?.short ?? ''}`, due.slice(0, 3).map(w => w.text).join('\n'))
+  return notice($, `Machine warning: ${due[0]?.short ?? ''}`, due.slice(0, 3).map(w => w.text).join('\n'), 'warn')
 }
 
 // The health file for this sample, with the notice times of `due` added.

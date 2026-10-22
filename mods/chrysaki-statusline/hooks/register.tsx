@@ -274,7 +274,11 @@ async function sendAlert($: EngineInterface, action: AlertAction, config: CacheC
   $.ui.toast(`${title}. ${body}.`, { timeoutMs: 8000 })
   if (!config.isDesktopNotify) return
   try {
-    await $.process.run(['notify-send', '-a', 'Claude Code', '-i', 'dialog-warning', title, body], { timeoutMs: 5000 })
+    // The replace tag keeps one cache notice on screen, and the timeout clears it.
+    await $.process.run([
+      'notify-send', '-a', 'Claude Code', '-i', 'dialog-warning', '-t', '15000',
+      '-h', 'string:x-canonical-private-synchronous:chrysaki-cache', title, body,
+    ], { timeoutMs: 5000 })
   } catch (error) {
     logFailure($, error)
   }

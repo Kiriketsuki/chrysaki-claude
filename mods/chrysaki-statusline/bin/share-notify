@@ -7,8 +7,10 @@ profile=$1
 url=$2
 partner=$3
 # The notice waits 30 minutes, as long as the band offer. timeout ends the
-# wait, and the notice then leaves without an action.
+# wait, and the notice then leaves without an action. The replace tag keeps
+# one share offer on screen, so a newer artifact takes the older offer's place.
 choice=$(timeout 1800 notify-send -a 'Claude Code' -i emblem-shared -t 0 \
+	-h string:x-canonical-private-synchronous:chrysaki-share \
 	-A default='Open to share' -A open='Open to share' \
 	"Share the new artifact with $partner" "$url")
 case $choice in
