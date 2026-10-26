@@ -245,3 +245,29 @@ function depthAfter(line: string, depth: number): number {
 
   return open
 }
+
+/**
+ * The raw text behind `shown`, the text a reply showed once each stretch became its short form.
+ * A candidate matches whole, or as a run of its lines when the reply held several text blocks.
+ * Undefined when no candidate holds a stretch that reads as `shown`.
+ */
+export function rawOf(shown: string, candidates: readonly string[]): string | undefined {
+  const target = shown.trim()
+  if (target === '') return undefined
+  const asShown = (text: string) => hideLongForms(text, { open: [], fence: undefined }).trim()
+  for (const candidate of candidates) {
+    if (!candidate.includes('{{')) continue
+    const whole = asShown(candidate)
+    if (whole === target) return candidate
+    if (!whole.includes(target)) continue
+    const lines = candidate.split('\n')
+    for (let start = 0; start < lines.length; start++) {
+      for (let end = start + 1; end <= lines.length; end++) {
+        const run = lines.slice(start, end).join('\n')
+        if (run.includes('{{') && asShown(run) === target) return run
+      }
+    }
+  }
+
+  return undefined
+}
