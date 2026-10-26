@@ -15,6 +15,67 @@ if [ -n "$_relay_sid" ] && mkdir -p "$_relay_dir" 2>/dev/null; then
     mv -f "$_relay_tmp" "$_relay_dir/$_relay_sid.json"
 fi
 
+# --- personal config ---
+PERSONAL="${CHRYSAKI_CLAUDE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/chrysaki/claude.json}"
+personal() { [ -f "$PERSONAL" ] && jq -r "$@" "$PERSONAL" 2>/dev/null; }
+
+# --- account config dir ---
+# The personal config's configDirs rules pick the folder for a cwd that
+# contains "match". The first match wins. CLAUDE_CONFIG_DIR overrides the
+# rules. The function sets _config_dir and _is_work.
+resolve_config_dir() {
+  local rule
+  _is_work=false
+  if [ -n "$CLAUDE_CONFIG_DIR" ]; then
+    _config_dir="$CLAUDE_CONFIG_DIR"
+    return
+  fi
+  _config_dir="$HOME/.claude"
+  rule=$(personal --arg d "$1" '[.configDirs[]? | . as $r | select($r.match != "" and ($d | contains($r.match)))][0] // empty | "\(.dir)\t\(.isWork // false)"' 2>/dev/null)
+  if [ -n "$rule" ]; then
+    _config_dir=$(printf '%s' "${rule%%	*}" | sed "s|^~|$HOME|")
+    _is_work="${rule##*	}"
+  fi
+}
+
+# --- usaKi usage cache ---
+# usaKi (github.com/Kiriketsuki/usaki) shows the 5h and 7d windows of each
+# Claude account. This block writes them to the usaKi cache file, which
+# follows docs/design/claude-cache.md in that repo. The block runs before the
+# mod fallback, so the cache also updates when the mod draws the statusline.
+# The account id comes from the config dir: ~/.claude is "default" and
+# ~/.claude-<name> is "<name>". The write goes to a temporary file first, so
+# usaKi never reads half a file. The block prints nothing.
+usaki_write_cache() {
+  local usage cwd acct cache_dir tmp
+  usage=$(printf '%s' "$input" | jq -c 'select(.rate_limits.five_hour or .rate_limits.seven_day)
+    | { five_hour: .rate_limits.five_hour, seven_day: .rate_limits.seven_day,
+        cwd: (.workspace.current_dir // .cwd // "") }' 2>/dev/null)
+  [ -n "$usage" ] || return 0
+  cwd=$(printf '%s' "$usage" | jq -r '.cwd' 2>/dev/null)
+  resolve_config_dir "$cwd"
+  acct=$(basename "$_config_dir")
+  acct=${acct#.}
+  case "$acct" in
+    claude)   acct=default ;;
+    claude-*) acct=${acct#claude-} ;;
+  esac
+  acct=$(printf '%s' "$acct" | tr -c 'A-Za-z0-9_-' '-')
+  [ -n "$acct" ] || return 0
+  cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/usaki"
+  mkdir -p "$cache_dir" 2>/dev/null || return 0
+  tmp=$(mktemp "$cache_dir/.claude-$acct.XXXXXX" 2>/dev/null) || return 0
+  if printf '%s' "$usage" | jq -c --arg a "$acct" --argjson now "$(date +%s)" '
+      def win: if type == "object" then { used_percentage, resets_at } else null end;
+      { account: $a, five_hour: (.five_hour | win), seven_day: (.seven_day | win), written_at: $now }' \
+      > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$cache_dir/claude-$acct.json"
+  else
+    rm -f "$tmp"
+  fi
+}
+usaki_write_cache
+
 # --- mod fallback ---
 # The chrysaki-statusline mod sets CHRYSAKI_STATUSLINE_MOD=1 when it loads, and
 # Claude Code passes the variable to this script. The mod then draws the
@@ -125,9 +186,6 @@ if [ -n "$remote" ]; then
 fi
 
 # --- personal config: ~/.config/chrysaki/claude.json, as the mod reads it ---
-PERSONAL="${CHRYSAKI_CLAUDE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/chrysaki/claude.json}"
-personal() { [ -f "$PERSONAL" ] && jq -r "$@" "$PERSONAL" 2>/dev/null; }
-
 # --- inbox depth: the list under "## <heading>" in the personal config's inbox file ---
 inbox_depth=0
 _inbox_file=$(personal '.inbox.file // empty')
@@ -144,19 +202,7 @@ five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty'
 seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null)
 
 # --- account config dir (still needed for email display and fetch-stats.sh) ---
-# The personal config's configDirs rules pick the folder for a cwd that
-# contains "match". The first match wins.
-_is_work=false
-if [ -n "$CLAUDE_CONFIG_DIR" ]; then
-  _config_dir="$CLAUDE_CONFIG_DIR"
-else
-  _config_dir="$HOME/.claude"
-  _rule=$(personal --arg d "$dir" '[.configDirs[]? | . as $r | select($r.match != "" and ($d | contains($r.match)))][0] // empty | "\(.dir)\t\(.isWork // false)"' 2>/dev/null)
-  if [ -n "$_rule" ]; then
-    _config_dir=$(printf '%s' "${_rule%%	*}" | sed "s|^~|$HOME|")
-    _is_work="${_rule##*	}"
-  fi
-fi
+resolve_config_dir "$dir"
 _acct=$(basename "$_config_dir")
 
 # --- compute_delta: Unix epoch -> human-readable time until reset ---
