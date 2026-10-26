@@ -38,14 +38,29 @@ resolve_config_dir() {
   fi
 }
 
+# --- account email ---
+# Claude Code keeps the account email in .claude.json. The personal config
+# dir keeps that file at $HOME/.claude.json, and any other config dir keeps
+# it inside the dir. The function prints the email, or nothing.
+account_email() {
+  local file
+  if [ "$(basename "$1")" = ".claude" ]; then
+    file="$HOME/.claude.json"
+  else
+    file="$1/.claude.json"
+  fi
+  jq -r '.oauthAccount.emailAddress // empty' "$file" 2>/dev/null
+}
+
 # --- usaKi usage cache ---
 # usaKi (github.com/Kiriketsuki/usaki) shows the 5h and 7d windows of each
 # Claude account. This block writes them to the usaKi cache file, which
 # follows docs/design/claude-cache.md in that repo. The block runs before the
 # mod fallback, so the cache also updates when the mod draws the statusline.
-# The account id comes from the config dir: ~/.claude is "default" and
-# ~/.claude-<name> is "<name>". The write goes to a temporary file first, so
-# usaKi never reads half a file. The block prints nothing.
+# The account id is the local part of the account email, in lower case. When
+# the email is unknown, the id comes from the config dir: ~/.claude is
+# "default" and ~/.claude-<name> is "<name>". The write goes to a temporary
+# file first, so usaKi never reads half a file. The block prints nothing.
 usaki_write_cache() {
   local usage cwd acct cache_dir tmp
   usage=$(printf '%s' "$input" | jq -c 'select(.rate_limits.five_hour or .rate_limits.seven_day)
@@ -54,12 +69,17 @@ usaki_write_cache() {
   [ -n "$usage" ] || return 0
   cwd=$(printf '%s' "$usage" | jq -r '.cwd' 2>/dev/null)
   resolve_config_dir "$cwd"
-  acct=$(basename "$_config_dir")
-  acct=${acct#.}
-  case "$acct" in
-    claude)   acct=default ;;
-    claude-*) acct=${acct#claude-} ;;
-  esac
+  acct=$(account_email "$_config_dir")
+  acct=${acct%%@*}
+  if [ -z "$acct" ]; then
+    acct=$(basename "$_config_dir")
+    acct=${acct#.}
+    case "$acct" in
+      claude)   acct=default ;;
+      claude-*) acct=${acct#claude-} ;;
+    esac
+  fi
+  acct=$(printf '%s' "$acct" | tr '[:upper:]' '[:lower:]')
   acct=$(printf '%s' "$acct" | tr -c 'A-Za-z0-9_-' '-')
   [ -n "$acct" ] || return 0
   cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/usaki"
@@ -596,19 +616,12 @@ COLS="${CHRYSAKI_COLUMNS:-${COLS:-${COLUMNS:-$(tput cols 2>/dev/null || echo 80)
 BAR_STYLE="${CHRYSAKI_BAR_STYLE:-wave}"
 
 # --- active Claude account (from resolved config dir) ---
-# Credentials file: for personal account it's $HOME/.claude.json (at home root),
-# for any other config dir it is <dir>/.claude.json (inside the dir)
-if [ "$_acct" = ".claude" ]; then
-  _creds_file="$HOME/.claude.json"
-else
-  _creds_file="${_config_dir}/.claude.json"
-fi
 if [ "$_is_work" = "true" ]; then
   C_ACCOUNT="$C_ORANGE"
 else
   C_ACCOUNT="$C_EMERALD_LT"
 fi
-claude_email=$(jq -r '.oauthAccount.emailAddress // empty' "$_creds_file" 2>/dev/null)
+claude_email=$(account_email "$_config_dir")
 [ -z "$claude_email" ] && claude_email="unknown"
 
 # Pre-compute deltas and section widths for bridge rendering
