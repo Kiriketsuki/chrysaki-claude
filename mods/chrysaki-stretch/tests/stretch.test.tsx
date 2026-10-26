@@ -5,7 +5,7 @@ import type { Engine } from 'claude-code/testing'
 import { grow } from '../hooks/grow'
 import { GUIDE } from '../hooks/guide'
 import { layout, link, linkAt, widthOf } from '../hooks/layout'
-import { hideLongForms, paragraphsOf, parse, stretches } from '../hooks/parse'
+import { hideLongForms, paragraphsOf, parse, rawOf, stretches } from '../hooks/parse'
 import { CODE, LINK } from '../hooks/theme'
 
 const REPLY = [
@@ -147,6 +147,21 @@ describe('parse', () => {
   })
 })
 
+describe('raw text', () => {
+  const shownOf = (text: string) => hideLongForms(text, { open: [], fence: undefined })
+
+  test('finds the reply whose short forms read as the drawn text', async () => {
+    expect(rawOf(shownOf(REPLY), ['No stretch here.', REPLY])).toBe(REPLY)
+    expect(rawOf('Something else.', [REPLY])).toBeUndefined()
+    expect(rawOf('', [REPLY])).toBeUndefined()
+  })
+
+  test('finds one text block of a reply that held several', async () => {
+    const block = 'Then {{a stretch|a stretch, longer}}.'
+    expect(rawOf('Then a stretch.', [`Intro.\n${block}\nOutro.`])).toBe(block)
+  })
+})
+
 describe('layout', () => {
   test('wraps words to the width and keeps a pressable phrase findable by its cells', async () => {
     const rows = layout(`one two three ${link('open', 'k', 'four five')} six`, 12)
@@ -225,6 +240,17 @@ test('a press grows a stretch in place, nested ones too, and « shrinks it back'
   await pressOn(ui, 'on a stale cache')
   await ui.advance(2000)
   expect(await textIn(ui)).toContain(', set in one file «.')
+  await ui.unmount()
+})
+
+test('a reply drawn from its shown text still gets its stretches from the transcript', async ($, on) => {
+  // Claude Code 2.1.310 hands the AssistantMessage site the text that classic.MessageDisplay showed.
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: REPLY, toolUses: [] }] }))
+  const ui = await mountReply($, FULLSCREEN, hideLongForms(REPLY, { open: [], fence: undefined }))
+  expect(await textIn(ui)).toBe('The build fails on a stale cache.\nBraces in code stay: {{a|b}}.')
+  await pressOn(ui, 'on a stale cache')
+  await ui.advance(2000)
+  expect(await textIn(ui)).toContain('because the cache key hashes only package.json')
   await ui.unmount()
 })
 

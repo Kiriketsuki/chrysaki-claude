@@ -1,8 +1,8 @@
 import { atom, memberOf, read, update } from 'claude-code'
-import type { Register, RenderInput, SessionMessage } from 'claude-code'
+import type { EngineInterface, Register, RenderInput, SessionMessage } from 'claude-code'
 
 import { GUIDE } from './guide'
-import { hideLongForms, isOpenable, paragraphsOf, parse, stretches } from './parse'
+import { hideLongForms, isOpenable, paragraphsOf, parse, rawOf, stretches } from './parse'
 import type { Segment, StreamState } from './parse'
 import type { ReplyPost, ReplyProps } from './reply'
 
@@ -117,9 +117,11 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
-    // A stretch still streaming has no closing braces yet; drawing it here keeps the raw markup
+    if (e.props.isSummary === true) return next(e)
+    const text = await replyText($, e.props.text)
+    // A stretch still streaming has no closing braces yet. Drawing it here keeps the raw markup
     // off the screen until it closes and becomes pressable.
-    if (e.props.isSummary === true || stretches(parse(e.props.text)).length === 0) return next(e)
+    if (stretches(parse(text)).length === 0) return next(e)
 
     const marker = e.props.isFirstOfReply ? '⏺ ' : '  '
     if (canPress(e)) {
@@ -127,7 +129,7 @@ export const register: Register = (on, options) => {
       // Claude Code's own markdown.
       const { Box, Client, Markdown, Text } = $.ui.resolve(e)
       const parts = await Promise.all(
-        paragraphsOf(e.props.text).map(async (paragraph, i) => {
+        paragraphsOf(text).map(async (paragraph, i) => {
           if (!paragraph.hasStretch) return <Markdown text={paragraph.text} />
           const key = `paragraph-${i}`
           const open = await read($, memberOf(openStretches, { requestId: `${e.requestId}#${key}` }))
@@ -150,7 +152,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="row">
         <Text>{marker}</Text>
         <Box flexDirection="column" flexShrink={1}>
-          <Markdown text={writeOpen(parse(e.props.text))} />
+          <Markdown text={writeOpen(parse(text))} />
         </Box>
       </Box>
     )
@@ -180,6 +182,23 @@ function replyPostOf(data: unknown): ReplyPost | undefined {
   const opened = 'opened' in data && typeof data.opened === 'string' ? data.opened : undefined
 
   return opened === undefined ? { open } : { open, opened }
+}
+
+// Since Claude Code 2.1.310 the AssistantMessage site gets the text that classic.MessageDisplay
+// showed, and the hook above already took the markup out of it. The transcript still holds the
+// raw reply, so the mod finds it there by its short forms (issue #62). One lookup per drawn text.
+const raws = new Map<string, string>()
+
+async function replyText($: EngineInterface, shown: string): Promise<string> {
+  if (stretches(parse(shown)).length > 0) return shown
+  const known = raws.get(shown)
+  if (known !== undefined) return known
+  const messages = await $.session.messages().catch(() => [] as SessionMessage[])
+  const replies = messages.filter(message => message.role === 'assistant').map(message => message.text).reverse()
+  const raw = rawOf(shown, replies)
+  if (raw === undefined) return shown
+  raws.set(shown, raw)
+  return raw
 }
 
 /** The text of the model's last reply: its rows after the person's last prompt. */
