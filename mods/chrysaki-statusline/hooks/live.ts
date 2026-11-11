@@ -6,6 +6,7 @@
 import type { HttpInit, HttpResponse } from 'claude-code'
 
 import type { LimitsFetch, StatuslineOutage } from '../types'
+import type { HubView } from './hub'
 import { USAGE_HEADERS, USAGE_URL, parseOAuthUsage } from './oauth'
 import type { OAuthLimits } from './oauth'
 import { STATUS_URL, parseIncidents } from './status'
@@ -22,6 +23,10 @@ export type LiveHost = {
   setFetch: (v: LimitsFetch) => Promise<void>
   getOutage: () => Promise<StatuslineOutage | null>
   setOutage: (v: StatuslineOutage | null) => Promise<void>
+  // The hub reading when the session is a hub session, else null. The usage
+  // endpoint is never called in a hub session, because it describes only the
+  // logged-in seat and not the seat that serves the session.
+  readHub?: () => Promise<HubView | null>
 }
 
 // The period of both reads.
@@ -65,6 +70,13 @@ export async function fetchLimits(
 ): Promise<void> {
   const [state, now] = await Promise.all([h.getFetch(), h.now()])
   if (state.isBusy && state.at !== undefined && now - state.at < BUSY_STALE_MS) return
+  const hub = h.readHub === undefined ? null : await h.readHub().catch(() => null)
+  if (hub !== null) {
+    // The session's own readings come first. The hub fallback shows only
+    // before the first response, and a missing or stale hub status is quiet.
+    if (hub.limits !== null) await apply(hub.limits, now)
+    return
+  }
   await h.setFetch({ isBusy: true, at: now })
   try {
     const limits = await readUsage(h)

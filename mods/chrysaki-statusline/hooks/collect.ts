@@ -7,6 +7,8 @@ import type { ProcessRunInit, ProcessRunResult, SessionMeasureInput, SessionUsag
 import type { StatuslineGit, StatuslineIdentity, StatuslineRemote, StatuslineUsage, StatuslineWindow, PersonalConfig } from '../types'
 import { inboxDepth, parseShortstat, repoPathFromRemote } from './format'
 import { configDirFor, slashed } from './personal'
+import { hubCachePath, hubPoolOf, parseHubCache } from './hub'
+import type { HubCurrent } from './hub'
 
 // What the collectors need from the engine. register.tsx builds it from $,
 // because the engine allows $ only in functions of the hooks module itself.
@@ -19,6 +21,9 @@ export type Host = {
   cwd: () => Promise<string>
   home: () => Promise<string | undefined>
   configDir: () => Promise<string | undefined>
+  // The hub session variables. A host that leaves them out is never a hub session.
+  hubPool?: () => Promise<string | undefined>
+  xdgCache?: () => Promise<string | undefined>
 }
 
 const RUN_TIMEOUT_MS = 10000
@@ -76,7 +81,7 @@ export function mergeIdentity(next: StatuslineIdentity, prev: StatuslineIdentity
   }
 }
 
-export async function readIdentity(host: Host, personal: PersonalConfig): Promise<StatuslineIdentity> {
+export async function readIdentity(host: Host, personal: PersonalConfig, hubCur?: HubCurrent | null): Promise<StatuslineIdentity> {
   const [model, version, cwd, home, configDir] = await Promise.all([
     host.model().catch(() => ''),
     host.version().catch(() => ''),
@@ -85,6 +90,15 @@ export async function readIdentity(host: Host, personal: PersonalConfig): Promis
     host.configDir(),
   ])
   const { dir, isWork: isWorkAccount } = configDirFor(personal, cwd, configDir, home ?? '')
+  // A hub session shows the pool, not the login. The account slot names the pool and
+  // the seat that takes new sessions. The label also keys the saved limits, so
+  // hub readings never mix with a real account.
+  const pool = hubPoolOf(host.hubPool === undefined ? undefined : await host.hubPool().catch(() => undefined))
+  if (pool !== null) {
+    const file = hubCachePath(home ?? '', pool, host.xdgCache === undefined ? undefined : await host.xdgCache().catch(() => undefined))
+    const text = await host.readFile(file).catch(() => null)
+    return { model, version, cwd, email: parseHubCache(pool, text, Date.now(), hubCur).label, isWorkAccount: pool === 'work' }
+  }
   // The personal account keeps .claude.json at HOME. Others keep it in the config dir.
   const credsPath = slashed(dir).endsWith('/.claude') ? `${slashed(home ?? '')}/.claude.json` : `${slashed(dir)}/.claude.json`
   let email = 'unknown'

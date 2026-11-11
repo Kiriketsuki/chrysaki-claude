@@ -79,6 +79,14 @@ usaki_write_cache() {
       claude-*) acct=${acct#claude-} ;;
     esac
   fi
+  # A hub session writes the stdin numbers only under the seat that served
+  # them. The logged-in account id is wrong there, and an unknown seat writes
+  # nothing. hub-status.sh also writes one file per seat from the hub status.
+  if [ -n "${_hub_pool:-}" ]; then
+    hub_load "$(printf '%s' "$usage" | jq -r '.five_hour.resets_at // empty' 2>/dev/null)" \
+      "$(printf '%s' "$usage" | jq -r '.seven_day.resets_at // empty' 2>/dev/null)" 1
+    acct="$_hub_seat"
+  fi
   acct=$(printf '%s' "$acct" | tr '[:upper:]' '[:lower:]')
   acct=$(printf '%s' "$acct" | tr -c 'A-Za-z0-9_-' '-')
   [ -n "$acct" ] || return 0
@@ -94,6 +102,11 @@ usaki_write_cache() {
     rm -f "$tmp"
   fi
 }
+# --- hub session ---
+# hub-status.sh detects a hub session and keeps a local cache of the hub status.
+# The refresh runs in the background, also when the mod draws the statusline.
+. "$(dirname "${BASH_SOURCE[0]}")/hub-status.sh"
+hub_detect && hub_refresh
 usaki_write_cache
 
 # --- mod fallback ---
@@ -220,6 +233,17 @@ five_h=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty'
 seven_d=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null | cut -d. -f1)
 five_h_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
 seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null)
+# A hub session matches the stdin windows to a seat. The stdin windows describe
+# the seat that served the last request, so they stay. Without them, the bars
+# show the seat that takes new sessions.
+_hub_has_stdin=0; [ -n "${five_h}${seven_d}" ] && _hub_has_stdin=1
+hub_load "$five_h_reset" "$seven_d_reset" "$_hub_has_stdin"
+if [ -n "$_hub_pool" ] && [ "$_hub_has_stdin" = 0 ]; then
+  if [ "$_hub_ok" = 1 ]; then
+    five_h="$_hub_five"; seven_d="$_hub_seven"
+    five_h_reset="$_hub_five_reset"; seven_d_reset="$_hub_seven_reset"
+  fi
+fi
 
 # --- account config dir (still needed for email display and fetch-stats.sh) ---
 resolve_config_dir "$dir"
@@ -623,6 +647,7 @@ else
 fi
 claude_email=$(account_email "$_config_dir")
 [ -z "$claude_email" ] && claude_email="unknown"
+[ -n "$_hub_label" ] && claude_email="$_hub_label"
 
 # Pre-compute deltas and section widths for bridge rendering
 delta5="" delta7=""
