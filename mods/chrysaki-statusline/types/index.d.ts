@@ -63,9 +63,13 @@ export type LimitsFetch = {
 export type StatuslineOutage = {
   impact: 'minor' | 'major' | 'critical'
   name: string
-  // Open incidents in all.
+  // Open incidents that touch Claude Code, in all.
   count: number
   url: string
+  // The components the top incident names. Empty when it names none.
+  components: string[]
+  // True when the page watches the top incident after a fix.
+  isMonitoring: boolean
 }
 
 export type StatuslineIdentity = {

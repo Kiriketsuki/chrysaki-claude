@@ -8,7 +8,7 @@
 
 import type { RenderElement } from 'claude-code'
 
-import type { BandEntry, BandTone } from '../types'
+import type { BandEntry, BandTone, StatuslineOutage } from '../types'
 import { iconFor } from './band'
 import { capPath, costSgd, leftEdge, modelLabel, rightEdge, sessionClock, smartCwd } from './format'
 import type { BandData } from './draw'
@@ -236,7 +236,15 @@ function brandCard(d: BandData): string {
 function costCard(d: BandData, hasClock = false): string {
   const u = d.usage
   const cost = u?.costUsd === undefined ? 'session' : `US$${u.costUsd.toFixed(2)} this session`
-  return hasClock && u?.startedAt !== undefined ? `${cost} · ${sessionClock(d.now - u.startedAt)}` : cost
+  const card = hasClock && u?.startedAt !== undefined ? `${cost} · ${sessionClock(d.now - u.startedAt)}` : cost
+  const o = d.outage
+  return o === null ? card : `${card} · ${outageCard(o)}`
+}
+
+// The top incident, the components it names, and whether the page watches it.
+export function outageCard(o: StatuslineOutage): string {
+  const where = o.components.length > 0 ? o.components.join(', ') : 'no component named'
+  return `${o.name} (${where}${o.isMonitoring ? ', monitoring' : ''})`
 }
 
 // The terminal header, one row: the chevron, the brand run, a rule, then the

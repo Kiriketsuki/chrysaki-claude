@@ -54,7 +54,7 @@ export function bandData(over: Partial<BandData> = {}): BandData {
     ctxHistory: [20000, 60000, 90000, 130000],
     isRuleAnimated: false, sweep: 0, usdToSgd: 1.35,
     isLimitsBusy: false, onRefreshLimits: no,
-    outage: { impact: 'major', name: 'Elevated errors', count: 2, url: 'https://status.claude.com' },
+    outage: { impact: 'major', name: 'Elevated errors', count: 2, url: 'https://status.claude.com', components: ['Claude Code'], isMonitoring: false },
     share: null, onShare: no, lag: null, warn: null, onLag: no,
     band: [{ source: 'codex', id: 'a', icon: '\ue000', text: 'codex 0', tone: 'calm', command: 'codex', hotkey: 'x', rank: 1 }],
     onBand: no, onOutage: no, onContext: no,
