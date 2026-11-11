@@ -15,6 +15,8 @@ import type { BarStyle } from './format'
 import { kilo, rowPxOption } from './format'
 import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from './limits'
 import { LIVE_MS, fetchLimits, fetchOutage } from './live'
+import { accountKey, hubCachePath, hubPoolOf, parseHubCache } from './hub'
+import type { HubCurrent } from './hub'
 import type { LiveHost } from './live'
 import type { OAuthLimits } from './oauth'
 import { finishHandoff, pressHandoff, pressResume, refreshResume, watchHandoff } from './handoff'
@@ -93,6 +95,8 @@ function hostOf($: EngineInterface): Host {
     cwd: async () => $.session.cwd(),
     home: async () => $.env.get('HOME'),
     configDir: async () => $.env.get('CLAUDE_CONFIG_DIR'),
+    hubPool: async () => $.env.get('CLAUDE_HUB_POOL'),
+    xdgCache: async () => $.env.get('XDG_CACHE_HOME'),
   }
 }
 
@@ -101,10 +105,24 @@ function hostOf($: EngineInterface): Host {
 // own read lands, so the header never shows empty.
 let lastIdentity: StatuslineIdentity | null = null
 
+// The reset times of the fallback windows the hub cache put in the usage. A
+// response from the hub clears them.
+let hubFallback: HubCurrent | null = null
+
+// The reset times of the windows this session read from its own responses, or
+// null when it has none. Windows that equal the hub fallback do not count.
+async function hubCurrent($: EngineInterface): Promise<HubCurrent | null> {
+  const u = await read($, usage)
+  const cur = { fiveResetMs: u?.fiveHour?.resetsAt, sevenResetMs: u?.sevenDay?.resetsAt }
+  if (cur.fiveResetMs === undefined && cur.sevenResetMs === undefined) return null
+  if (hubFallback !== null && cur.fiveResetMs === hubFallback.fiveResetMs && cur.sevenResetMs === hubFallback.sevenResetMs) return null
+  return cur
+}
+
 async function refreshLocal($: EngineInterface): Promise<void> {
   const host = hostOf($)
   const mine = await read($, personal)
-  const read_ = await readIdentity(host, mine)
+  const read_ = await readIdentity(host, mine, await hubCurrent($))
   const id = mergeIdentity(read_, (await read($, identity)) ?? lastIdentity)
   lastIdentity = id
   await update($, identity, () => id)
@@ -131,7 +149,10 @@ async function refreshRemote($: EngineInterface, isForced: boolean): Promise<voi
 async function seedUsage($: EngineInterface): Promise<void> {
   try {
     const email = (await read($, identity))?.email ?? 'unknown'
-    const [u, raw, now] = await Promise.all([$.session.usage(), $.store.get(limitsKey(email)).catch(() => undefined), $.clock.now()])
+    // A hub session starts from the hub fallback, not from a saved reading,
+    // because a new session can land on another seat.
+    const isHub = email.startsWith('hub ')
+    const [u, raw, now] = await Promise.all([$.session.usage(), isHub ? undefined : $.store.get(limitsKey(email)).catch(() => undefined), $.clock.now()])
     const fresh = usageFrom(u)
     // A hot reload keeps the state. Its windows stand in for any the
     // engine has not read yet.
@@ -166,6 +187,17 @@ function liveHostOf($: EngineInterface): LiveHost {
     setFetch: async v => { await update($, limitsFetch, () => v) },
     getOutage: async () => read($, outage),
     setOutage: async v => { await update($, outage, () => v) },
+    readHub: async () => {
+      const host = hostOf($)
+      const pool = hubPoolOf(await $.env.get('CLAUDE_HUB_POOL'))
+      if (pool === null) return null
+      const file = hubCachePath((await host.home()) ?? '', pool, await $.env.get('XDG_CACHE_HOME'))
+      const view = parseHubCache(pool, await $.fs.read(file).catch(() => null), await $.clock.now(), await hubCurrent($))
+      // The fallback numbers are not the session's own. Remember their reset
+      // times, so the seat match does not take them for a reading.
+      if (view.limits !== null) hubFallback = { fiveResetMs: view.limits.fiveHour?.resetsAt, sevenResetMs: view.limits.sevenDay?.resetsAt }
+      return view
+    },
   }
 }
 
@@ -193,10 +225,10 @@ async function saveLimits($: EngineInterface, u: StatuslineUsage): Promise<void>
   if (saved === null) return
   try {
     const email = (await read($, identity))?.email ?? 'unknown'
-    await $.store.set(limitsKey(email), saved)
+    await $.store.set(limitsKey(accountKey(email)), saved)
     const h = addSample(await read($, usageHistory), u, now)
     await update($, usageHistory, () => h)
-    await $.store.set(historyKey(email), h)
+    await $.store.set(historyKey(accountKey(email)), h)
   } catch (error) {
     logFailure($, error)
   }
@@ -207,7 +239,7 @@ async function saveLimits($: EngineInterface, u: StatuslineUsage): Promise<void>
 async function loadHistory($: EngineInterface): Promise<void> {
   try {
     const email = (await read($, identity))?.email ?? 'unknown'
-    const raw = await $.store.get(historyKey(email)).catch(() => undefined)
+    const raw = await $.store.get(historyKey(accountKey(email))).catch(() => undefined)
     await update($, usageHistory, () => parseHistory(raw))
   } catch (error) {
     logFailure($, error)
@@ -698,6 +730,11 @@ function startup($: EngineInterface, rt: Runtime, old: readonly Timer[]): Timer[
       void refreshLimits($, false)
       void refreshOutage($)
     }),
+    // A hub session reads a local cache, so it polls each minute. A session
+    // outside the hub does nothing here.
+    $.clock.every(REFRESH_MS, () => {
+      void liveHostOf($).readHub?.().then(h => { if (h !== null) return refreshLimits($, false) }).catch(() => undefined)
+    }),
     $.clock.every(CACHE_TICK_MS, () => { void tickCache($, rt.cacheConfig, rt.isTurnRunning()) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshResume(handoffHostOf($)) }),
     $.clock.every(CACHE_TICK_MS, () => { void refreshLag($) }),
@@ -773,7 +810,10 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     await update($, usage, prev => rollUsage(usageFromMeasure(e, prev), now))
     if (e.changed.includes('context')) await update($, ctxHistory, h => addTokens(h, e.context?.tokens))
-    if (e.changed.includes('rateLimits')) await saveLimits($, usageFrom(e))
+    if (e.changed.includes('rateLimits')) {
+      hubFallback = null
+      await saveLimits($, usageFrom(e))
+    }
     return next(e)
   })
 
