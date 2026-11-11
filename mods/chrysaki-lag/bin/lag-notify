@@ -2,6 +2,18 @@
 # The desktop notice for a lag that lasts. It prints `open` when the person
 # clicks the notice or its button, and the mod then opens the /lag pane in
 # the session that sent it.
-# Usage: lag-notify <title> <body>
-notify-send -a 'Claude Code' -i utilities-system-monitor -u critical -t 0 \
+# Usage: lag-notify <title> <body> [lag|warn]
+#
+# Each kind carries its own replace tag, so a new notice takes the place of
+# the last one of the same kind instead of stacking under it. A lag notice
+# uses normal urgency and expires after 20 seconds, because the /lag pane
+# keeps the detail. A critical warning stays until someone closes it, and its
+# tag still keeps it to one notice on screen.
+kind=${3:-lag}
+case $kind in
+warn) urgency=critical timeout=0 ;;
+*) kind=lag urgency=normal timeout=20000 ;;
+esac
+notify-send -a 'Claude Code' -i utilities-system-monitor -u "$urgency" -t "$timeout" \
+	-h "string:x-canonical-private-synchronous:chrysaki-lag-$kind" \
 	-A default='Open /lag' -A open='Open /lag' "$1" "$2" | sed 's/^default$/open/'

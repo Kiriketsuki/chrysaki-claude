@@ -6,7 +6,7 @@ This mod says why the machine lags, stops a cause on request, and warns about fa
 
 - **Header badge.** While the machine is busy or laggy, the statusline header shows `l: ▲ io 41%`: the bound resource and its 10-second share. The badge is Blonde for busy and Error for laggy. Press it, or `ctrl+x tab` then `l`, to open `/lag`. The badge needs `chrysaki-statusline`.
 - **`/lag` pane.** The verdict, a bar for each resource, the swap use, and the top 8 causes for the bound resource. The pane samples every 3 seconds while it is open.
-- **Desktop notice.** When the machine stays laggy over a minute, one notice names the top two causes. A click opens `/lag` in the session that sent it. The notice waits 15 minutes before the next one, across every session on the machine.
+- **Desktop notice.** When the machine stays laggy over a minute, one notice names the top two causes. A click opens `/lag` in the session that sent it. The notice waits 15 minutes before the next one, across every session on the machine. It clears itself after 20 seconds, and a new lag notice replaces the last one instead of stacking.
 
 ## Health warnings
 
@@ -27,7 +27,7 @@ The sampler also runs a health check every 30 seconds. `bin/health-snapshot` rea
 
 - **Header badge.** The statusline shows `w: ⚠ /home 91% +1`: the worst warning and a count of the rest. Press it, or `w`, to open `/lag`.
 - **`/lag` pane.** The warnings sit above the causes. Each row has a hide key, `a` to `f`. A hidden warning drops from the badge and shows again when its level changes. For failed units, it also shows again when the list of units changes.
-- **Desktop notice.** A critical warning sends one notice, at most once per warning per hour, across every session.
+- **Desktop notice.** A critical warning sends one notice, at most once per warning per hour, across every session. It stays until you close it, and a newer warning replaces it.
 - **Docker space.** A disk warning on the mount that holds the Docker root names the space `docker system df` can give back. That scan takes up to 30 seconds, so it runs at most every 30 minutes and never on a disk-bound machine.
 
 The check reads local file systems only. A `statvfs` call on a network mount can hang when the server is gone.
