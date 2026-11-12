@@ -16,6 +16,8 @@ import { kilo, rowPxOption } from './format'
 import { limitsKey, parseSaved, rollUsage, toSaved, withOAuth, withSaved } from './limits'
 import { LIVE_MS, fetchLimits, fetchOutage } from './live'
 import { accountKey, hubCachePath, hubPoolOf, parseHubCache } from './hub'
+import { hubLiveDir, syncLiveFile } from './hublive'
+import type { LiveFileHost } from './hublive'
 import type { HubCurrent } from './hub'
 import type { LiveHost } from './live'
 import type { OAuthLimits } from './oauth'
@@ -97,6 +99,25 @@ function hostOf($: EngineInterface): Host {
     configDir: async () => $.env.get('CLAUDE_CONFIG_DIR'),
     hubPool: async () => $.env.get('CLAUDE_HUB_POOL'),
     xdgCache: async () => $.env.get('XDG_CACHE_HOME'),
+  }
+}
+
+// The engine surface of the live session file writer in hublive.ts. The engine
+// has no remove, move or mode call, so those go through the shell tools.
+function liveFileHostOf($: EngineInterface): LiveFileHost {
+  const sh = async (argv: string[]) => {
+    const r = await $.process.run(argv, { timeoutMs: 5000 })
+    if (r.exitCode !== 0) throw new Error(`${argv[0]} failed`)
+  }
+  return {
+    now: async () => $.clock.now(),
+    read: async path => ((await $.fs.exists(path)) ? String(await $.fs.read(path)) : null),
+    exists: async path => $.fs.exists(path),
+    makePrivateDir: async path => { await sh(['mkdir', '-p', '-m', '700', path]); await sh(['chmod', '700', path]) },
+    write: async (path, text) => { await $.fs.write(path, text) },
+    move: async (from, to) => sh(['mv', '-f', from, to]),
+    remove: async path => sh(['rm', '-f', path]),
+    prune: async (dir, maxAgeMs) => sh(['find', dir, '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-mmin', `+${Math.ceil(maxAgeMs / 60000)}`, '-delete']),
   }
 }
 
@@ -196,6 +217,9 @@ function liveHostOf($: EngineInterface): LiveHost {
       // The fallback numbers are not the session's own. Remember their reset
       // times, so the seat match does not take them for a reading.
       if (view.limits !== null) hubFallback = { fiveResetMs: view.limits.fiveHour?.resetsAt, sevenResetMs: view.limits.sevenDay?.resetsAt }
+      // usaKi counts the live sessions of each seat from this file.
+      const liveDir = hubLiveDir(pool, { cliproxyCache: await $.env.get('CLIPROXY_CACHE_DIR'), xdgCache: await $.env.get('XDG_CACHE_HOME'), home: await host.home() })
+      await syncLiveFile(liveFileHostOf($), liveDir, await $.session.id(), view.seat)
       return view
     },
   }

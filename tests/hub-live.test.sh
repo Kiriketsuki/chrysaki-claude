@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Tests for hub_live_write in hub-status.sh. The repo has no shell test yet,
+# so this script is self-contained. Run it with: bash tests/hub-live.test.sh
+# Every test uses a temporary CLIPROXY_CACHE_DIR, never the real cache.
+
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+export CLIPROXY_CACHE_DIR="$TMP/cache"
+export HOME="$TMP/home"
+. "$ROOT/hub-status.sh"
+
+FAILS=0
+ok() { printf 'ok   %s\n' "$1"; }
+bad() { printf 'FAIL %s\n' "$1"; FAILS=$((FAILS + 1)); }
+check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
+
+DIR="$CLIPROXY_CACHE_DIR/work.live"
+FILE="$DIR/sess-1.json"
+
+reset() { rm -rf "$CLIPROXY_CACHE_DIR"; _hub_pool=work; _hub_seat=seat-a; }
+
+reset
+hub_live_write sess-1
+check "writes the file" '[ -f "$FILE" ]'
+check "content has the seat" 'jq -e ".seat == \"seat-a\"" "$FILE" >/dev/null'
+check "content has written_at" 'jq -e ".written_at | type == \"number\"" "$FILE" >/dev/null'
+check "folder mode is 700" '[ "$(stat -c %a "$DIR")" = 700 ]'
+check "no temp file is left" '[ -z "$(find "$DIR" -name ".*" -type f)" ]'
+
+reset
+hub_live_write sess-1
+touch -d '30 seconds ago' "$FILE"
+mark=$(stat -c %Y "$FILE")
+hub_live_write sess-1
+check "a young file with the same seat is not rewritten" '[ "$(stat -c %Y "$FILE")" = "$mark" ]'
+touch -d '90 seconds ago' "$FILE"
+mark=$(stat -c %Y "$FILE")
+hub_live_write sess-1
+check "an old file gets a heartbeat" '[ "$(stat -c %Y "$FILE")" != "$mark" ]'
+touch -d '30 seconds ago' "$FILE"
+_hub_seat=seat-b
+hub_live_write sess-1
+check "a seat change rewrites at once" 'jq -e ".seat == \"seat-b\"" "$FILE" >/dev/null'
+
+reset
+hub_live_write sess-1
+_hub_seat=""
+hub_live_write sess-1
+check "an unknown seat removes the old file" '[ ! -e "$FILE" ]'
+hub_live_write sess-1
+check "an unknown seat with no file is fine" '[ ! -e "$FILE" ]'
+
+reset
+_hub_pool=""
+hub_live_write sess-1
+check "a session without the hub writes nothing" '[ ! -e "$CLIPROXY_CACHE_DIR" ]'
+
+reset
+hub_live_write "../evil"
+hub_live_write ""
+hub_live_write 'a b'
+check "a bad session id writes nothing" '[ ! -e "$DIR" ] && [ ! -e "$CLIPROXY_CACHE_DIR/evil.json" ]'
+_hub_seat='bad"seat'
+hub_live_write sess-1
+check "a bad seat name writes nothing" '[ ! -e "$FILE" ]'
+_hub_seat=seat-a; _hub_pool='../x'
+hub_live_write sess-1
+check "a bad pool name writes nothing" '[ ! -e "$CLIPROXY_CACHE_DIR" ]'
+
+reset
+hub_live_write sess-1
+printf '{}' > "$DIR/old.json"; touch -d '2 days ago' "$DIR/old.json"
+printf '{}' > "$DIR/recent.json"; touch -d '2 hours ago' "$DIR/recent.json"
+touch -d '90 seconds ago' "$FILE"
+hub_live_write sess-1
+check "prune removes a file older than one day" '[ ! -e "$DIR/old.json" ]'
+check "prune keeps a younger file" '[ -e "$DIR/recent.json" ]'
+check "prune keeps the live file" '[ -e "$FILE" ]'
+
+reset
+mkdir -p "$CLIPROXY_CACHE_DIR" && chmod 500 "$CLIPROXY_CACHE_DIR"
+hub_live_write sess-1; rc=$?
+chmod 700 "$CLIPROXY_CACHE_DIR"
+check "a write error returns 0" '[ "$rc" = 0 ]'
+
+if [ "$FAILS" -gt 0 ]; then printf '%s test(s) failed\n' "$FAILS"; exit 1; fi
+printf 'all tests passed\n'

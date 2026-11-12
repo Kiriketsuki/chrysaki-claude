@@ -238,6 +238,7 @@ seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty
 # show the seat that takes new sessions.
 _hub_has_stdin=0; [ -n "${five_h}${seven_d}" ] && _hub_has_stdin=1
 hub_load "$five_h_reset" "$seven_d_reset" "$_hub_has_stdin"
+hub_live_write "$_relay_sid"
 if [ -n "$_hub_pool" ] && [ "$_hub_has_stdin" = 0 ]; then
   if [ "$_hub_ok" = 1 ]; then
     five_h="$_hub_five"; seven_d="$_hub_seven"
