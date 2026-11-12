@@ -103,7 +103,7 @@ function hostOf($: EngineInterface): Host {
 }
 
 // The engine surface of the live session file writer in hublive.ts. The engine
-// has no remove, move or mode call, so those go through the shell tools.
+// has no move or mode call, so those go through the shell tools.
 function liveFileHostOf($: EngineInterface): LiveFileHost {
   const sh = async (argv: string[]) => {
     const r = await $.process.run(argv, { timeoutMs: 5000 })
@@ -112,11 +112,9 @@ function liveFileHostOf($: EngineInterface): LiveFileHost {
   return {
     now: async () => $.clock.now(),
     read: async path => ((await $.fs.exists(path)) ? String(await $.fs.read(path)) : null),
-    exists: async path => $.fs.exists(path),
     makePrivateDir: async path => { await sh(['mkdir', '-p', '-m', '700', path]); await sh(['chmod', '700', path]) },
     write: async (path, text) => { await $.fs.write(path, text) },
     move: async (from, to) => sh(['mv', '-f', from, to]),
-    remove: async path => sh(['rm', '-f', path]),
     prune: async (dir, maxAgeMs) => sh(['find', dir, '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-mmin', `+${Math.ceil(maxAgeMs / 60000)}`, '-delete']),
   }
 }

@@ -10,6 +10,8 @@
 export const LIVE_HEARTBEAT_MS = 60000
 // A file older than this is deleted.
 export const LIVE_PRUNE_MS = 86400000
+// The prune runs at most once in this period, by a stamp file in the folder.
+export const LIVE_PRUNE_EVERY_MS = 600000
 
 const POOL_RE = /^[a-z0-9-]+$/
 const NAME_RE = /^[A-Za-z0-9_-]+$/
@@ -18,14 +20,12 @@ export type LiveFileHost = {
   now: () => Promise<number>
   // The text of a file, or null when it is missing.
   read: (path: string) => Promise<string | null>
-  exists: (path: string) => Promise<boolean>
   // Makes the folder with mode 700, with its parents when needed.
   makePrivateDir: (path: string) => Promise<void>
   // Writes a whole file.
   write: (path: string, text: string) => Promise<void>
   // Moves a file over the target in one step.
   move: (from: string, to: string) => Promise<void>
-  remove: (path: string) => Promise<void>
   // Deletes each *.json file in the folder that is older than maxAgeMs.
   prune: (dir: string, maxAgeMs: number) => Promise<void>
 }
@@ -63,10 +63,11 @@ function isFresh(text: string | null, seat: string, nowMs: number): boolean {
   }
 }
 
-// Writes, refreshes or removes the file of one session. `dir` is null for a
-// session outside the hub, and the function then does nothing. A null seat, or
-// a seat or session id with a bad character, removes the file. The function
-// never throws.
+// Writes or refreshes the file of one session. `dir` is null for a session
+// outside the hub, and the function then does nothing. A null seat, or a seat
+// or session id with a bad character, writes nothing and keeps the old file.
+// The file then ages out through written_at, and the prune deletes it. This
+// keeps the shell writer of the same file safe. The function never throws.
 export async function syncLiveFile(
   host: LiveFileHost,
   dir: string | null,
@@ -76,17 +77,19 @@ export async function syncLiveFile(
   if (dir === null || sessionId === null || sessionId === undefined || !NAME_RE.test(sessionId)) return
   const file = `${dir}/${sessionId}.json`
   try {
-    if (seat === null || !NAME_RE.test(seat)) {
-      if (await host.exists(file)) await host.remove(file)
-      return
-    }
+    if (seat === null || !NAME_RE.test(seat)) return
     const now = await host.now()
     if (isFresh(await host.read(file), seat, now)) return
     await host.makePrivateDir(dir)
     const tmp = `${dir}/.${sessionId}.tmp`
     await host.write(tmp, liveFileText(seat, now))
     await host.move(tmp, file)
-    await host.prune(dir, LIVE_PRUNE_MS)
+    const stamp = `${dir}/.prune.stamp`
+    const last = Number(await host.read(stamp))
+    if (!(now - last < LIVE_PRUNE_EVERY_MS)) {
+      await host.write(stamp, String(now))
+      await host.prune(dir, LIVE_PRUNE_MS)
+    }
   } catch {
     // A failed write must never fail the band. The next call tries again.
   }

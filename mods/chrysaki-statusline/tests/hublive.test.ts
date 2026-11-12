@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { LIVE_HEARTBEAT_MS, LIVE_PRUNE_MS, hubLiveDir, liveFileText, syncLiveFile } from '../hooks/hublive'
+import { LIVE_HEARTBEAT_MS, LIVE_PRUNE_EVERY_MS, LIVE_PRUNE_MS, hubLiveDir, liveFileText, syncLiveFile } from '../hooks/hublive'
 import type { LiveFileHost } from '../hooks/hublive'
 
 const DIR = '/tmp/test-cache/work.live'
@@ -13,11 +13,9 @@ function fakeHost(start = 1794402600000) {
   const host: LiveFileHost = {
     now: async () => now,
     read: async p => files.get(p) ?? null,
-    exists: async p => files.has(p),
     makePrivateDir: async p => { calls.push(`mkdir ${p}`) },
     write: async (p, t) => { calls.push(`write ${p}`); files.set(p, t) },
     move: async (from, to) => { calls.push(`move ${from}`); files.set(to, files.get(from) ?? ''); files.delete(from) },
-    remove: async p => { calls.push(`remove ${p}`); files.delete(p) },
     prune: async (d, age) => { calls.push(`prune ${d} ${age}`) },
   }
   return { host, files, calls, advance: (ms: number) => { now += ms } }
@@ -43,8 +41,8 @@ describe('the hub live session file', () => {
   test('writes a temp file, moves it, and leaves none behind', async () => {
     const t = fakeHost()
     await syncLiveFile(t.host, DIR, 'sess-1', 'seat-a')
-    expect(t.calls).toEqual([`mkdir ${DIR}`, `write ${DIR}/.sess-1.tmp`, `move ${DIR}/.sess-1.tmp`, `prune ${DIR} ${LIVE_PRUNE_MS}`])
-    expect([...t.files.keys()]).toEqual([`${DIR}/sess-1.json`])
+    expect(t.calls).toEqual([`mkdir ${DIR}`, `write ${DIR}/.sess-1.tmp`, `move ${DIR}/.sess-1.tmp`, `write ${DIR}/.prune.stamp`, `prune ${DIR} ${LIVE_PRUNE_MS}`])
+    expect([...t.files.keys()].filter(k => k.endsWith('.tmp'))).toEqual([])
   })
 
   test('does not rewrite a young file with the same seat', async () => {
@@ -79,14 +77,26 @@ describe('the hub live session file', () => {
     expect(JSON.parse(t.files.get(`${DIR}/sess-1.json`) ?? '').seat).toBe('seat-a')
   })
 
-  test('removes the old file when the seat is unknown', async () => {
+  test('keeps the old file and writes nothing when the seat is unknown', async () => {
     const t = fakeHost()
     await syncLiveFile(t.host, DIR, 'sess-1', 'seat-a')
-    await syncLiveFile(t.host, DIR, 'sess-1', null)
-    expect(t.files.size).toBe(0)
+    const text = t.files.get(`${DIR}/sess-1.json`)
     t.calls.length = 0
     await syncLiveFile(t.host, DIR, 'sess-1', null)
     expect(t.calls).toEqual([])
+    expect(t.files.get(`${DIR}/sess-1.json`)).toBe(text)
+  })
+
+  test('prunes at most once in 10 minutes', async () => {
+    const t = fakeHost()
+    const prunes = () => t.calls.filter(c => c.startsWith('prune')).length
+    await syncLiveFile(t.host, DIR, 'sess-1', 'seat-a')
+    t.advance(LIVE_HEARTBEAT_MS + 1000)
+    await syncLiveFile(t.host, DIR, 'sess-1', 'seat-a')
+    expect(prunes()).toBe(1)
+    t.advance(LIVE_PRUNE_EVERY_MS)
+    await syncLiveFile(t.host, DIR, 'sess-1', 'seat-a')
+    expect(prunes()).toBe(2)
   })
 
   test('writes nothing outside the hub', async () => {

@@ -27,7 +27,7 @@ check "writes the file" '[ -f "$FILE" ]'
 check "content has the seat" 'jq -e ".seat == \"seat-a\"" "$FILE" >/dev/null'
 check "content has written_at" 'jq -e ".written_at | type == \"number\"" "$FILE" >/dev/null'
 check "folder mode is 700" '[ "$(stat -c %a "$DIR")" = 700 ]'
-check "no temp file is left" '[ -z "$(find "$DIR" -name ".*" -type f)" ]'
+check "no temp file is left" '[ -z "$(find "$DIR" -name ".sess-1.*" -type f)" ]'
 
 reset
 hub_live_write sess-1
@@ -48,9 +48,10 @@ reset
 hub_live_write sess-1
 _hub_seat=""
 hub_live_write sess-1
-check "an unknown seat removes the old file" '[ ! -e "$FILE" ]'
+check "an unknown seat keeps the old file" '[ -e "$FILE" ]'
+rm -f "$FILE"
 hub_live_write sess-1
-check "an unknown seat with no file is fine" '[ ! -e "$FILE" ]'
+check "an unknown seat writes no file" '[ ! -e "$FILE" ]'
 
 reset
 _hub_pool=""
@@ -74,10 +75,20 @@ hub_live_write sess-1
 printf '{}' > "$DIR/old.json"; touch -d '2 days ago' "$DIR/old.json"
 printf '{}' > "$DIR/recent.json"; touch -d '2 hours ago' "$DIR/recent.json"
 touch -d '90 seconds ago' "$FILE"
+rm -f "$DIR/.prune.stamp"
 hub_live_write sess-1
 check "prune removes a file older than one day" '[ ! -e "$DIR/old.json" ]'
 check "prune keeps a younger file" '[ -e "$DIR/recent.json" ]'
 check "prune keeps the live file" '[ -e "$FILE" ]'
+
+printf '{}' > "$DIR/old2.json"; touch -d '2 days ago' "$DIR/old2.json"
+touch -d '90 seconds ago' "$FILE"
+hub_live_write sess-1
+check "prune runs at most once in 10 minutes" '[ -e "$DIR/old2.json" ]'
+touch -d '11 minutes ago' "$DIR/.prune.stamp"
+touch -d '90 seconds ago' "$FILE"
+hub_live_write sess-1
+check "prune runs again after the stamp is old" '[ ! -e "$DIR/old2.json" ]'
 
 reset
 mkdir -p "$CLIPROXY_CACHE_DIR" && chmod 500 "$CLIPROXY_CACHE_DIR"

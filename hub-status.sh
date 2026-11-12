@@ -176,11 +176,14 @@ hub_load() {
 #   <cache>/<pool>.live/<session id>.json   {"seat":"<seat>","written_at":<epoch s>}
 # usaKi counts a file when written_at is at most 600 s old. A heartbeat each
 # HUB_LIVE_HEARTBEAT_S keeps the file inside that window, and a young file
-# with the same seat is not rewritten. A session with an unknown seat loses its
-# file. A file older than one day is pruned. The function never prints and
-# always returns 0, so it never fails the statusline.
+# with the same seat is not rewritten. A session with an unknown seat writes
+# nothing and keeps its old file. The file then ages out through written_at, and
+# the prune deletes it after one day. This keeps a second writer of the same file
+# safe. The prune runs at most once each HUB_LIVE_PRUNE_EVERY_S. The function
+# never prints and always returns 0, so it never fails the statusline.
 HUB_LIVE_HEARTBEAT_S="${CHRYSAKI_HUB_LIVE_HEARTBEAT_S:-60}"
 HUB_LIVE_PRUNE_MIN=1440
+HUB_LIVE_PRUNE_EVERY_S=600
 
 hub_live_write() {
   local sid="${1:-}" dir file tmp now
@@ -188,10 +191,7 @@ hub_live_write() {
   case "$sid" in ''|*[!A-Za-z0-9_-]*) return 0 ;; esac
   dir="$HUB_CACHE_DIR/$_hub_pool.live"
   file="$dir/$sid.json"
-  case "${_hub_seat:-}" in
-    '') [ -e "$file" ] && rm -f "$file" 2>/dev/null; return 0 ;;
-    *[!A-Za-z0-9_-]*) [ -e "$file" ] && rm -f "$file" 2>/dev/null; return 0 ;;
-  esac
+  case "${_hub_seat:-}" in ''|*[!A-Za-z0-9_-]*) return 0 ;; esac
   now=$(date +%s)
   if [ -f "$file" ] && [ $(( now - $(_hub_mtime "$file") )) -lt "$HUB_LIVE_HEARTBEAT_S" ] &&
      grep -qF "\"seat\":\"$_hub_seat\"" "$file" 2>/dev/null; then
@@ -204,6 +204,10 @@ hub_live_write() {
   else
     rm -f "$tmp"
   fi
-  find "$dir" -maxdepth 1 -type f -name '*.json' -mmin +"$HUB_LIVE_PRUNE_MIN" -delete 2>/dev/null
+  local stamp="$dir/.prune.stamp"
+  if [ $(( now - $(_hub_mtime "$stamp") )) -ge "$HUB_LIVE_PRUNE_EVERY_S" ]; then
+    : > "$stamp" 2>/dev/null
+    find "$dir" -maxdepth 1 -type f -name '*.json' -mmin +"$HUB_LIVE_PRUNE_MIN" -delete 2>/dev/null
+  fi
   return 0
 }

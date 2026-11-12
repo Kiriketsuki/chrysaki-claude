@@ -187,26 +187,6 @@ Platform-specific setup (WinGet PATH) is conditional on `uname -s` matching `MIN
 | `/tmp/.claude_usage_cache` | `fetch-usage.sh` | `statusline-command.sh` | `5h%\n7d%\nreset_ts\nreset_ts` |
 | `/tmp/.claude_stats_cache_{slug}` | `fetch-stats.sh` | `statusline-command.sh` | Open issue count |
 
-## Hub files
-
-A hub session runs Claude Code through a CLIProxyAPI hub. The shell script `hub-status.sh` and the mod keep these files in `${CLIPROXY_CACHE_DIR:-${XDG_CACHE_HOME:-~/.cache}/cliproxy}`.
-
-| File | Content |
-|:---|:---|
-| `<pool>.status.json` | Cache of the last good hub status |
-| `<pool>.live/<session id>.json` | One live session: `{"seat":"seat-a","written_at":<epoch s>}` |
-
-usaKi reads the `<pool>.live/` folder to show the live sessions of each seat. It counts a file when `now - written_at` is 600 s or less.
-
-- The shell script and the mod each write the file when they know the seat of the session. A session outside the hub writes nothing.
-- A write goes to a temporary file, then `mv -f`. The folder has mode 700.
-- A file with the same seat that is younger than 60 s is not rewritten. A write each 60 s keeps the file inside the 600 s window.
-- If the seat is unknown, the session writes no file and removes its old file.
-- Each write also deletes `*.json` files in the folder that are older than one day.
-- The session id and the pool name may hold only `A-Za-z0-9_-`. Any other id writes nothing.
-
-Tests: `bash tests/hub-live.test.sh` for the shell writer, and `claude plugin test mods/chrysaki-statusline` for the mod writer.
-
 ## Unicode Reference
 
 All chars emitted as explicit UTF-8 byte sequences for shell-locale independence:
