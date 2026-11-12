@@ -114,7 +114,19 @@ usaki_write_cache
 # Claude Code passes the variable to this script. The mod then draws the
 # statusline above the prompt, so this script prints nothing. Without the mod,
 # this script is the statusline. Set CHRYSAKI_STATUSLINE_BOTH=1 to keep both.
+# The mod draws the statusline, but this script still runs in each session. So
+# it writes the hub live session file here, from the seat in the stdin JSON.
+hub_live_from_input() {
+  [ -n "${_hub_pool:-}" ] || return 0
+  local f s has=0
+  f=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
+  s=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null)
+  [ -n "${f}${s}" ] && has=1
+  hub_load "$f" "$s" "$has"
+  hub_live_write "$_relay_sid"
+}
 if [ "${CHRYSAKI_STATUSLINE_MOD:-}" = "1" ] && [ "${CHRYSAKI_STATUSLINE_BOTH:-}" != "1" ]; then
+  hub_live_from_input
   exit 0
 fi
 
@@ -238,6 +250,7 @@ seven_d_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty
 # show the seat that takes new sessions.
 _hub_has_stdin=0; [ -n "${five_h}${seven_d}" ] && _hub_has_stdin=1
 hub_load "$five_h_reset" "$seven_d_reset" "$_hub_has_stdin"
+hub_live_write "$_relay_sid"
 if [ -n "$_hub_pool" ] && [ "$_hub_has_stdin" = 0 ]; then
   if [ "$_hub_ok" = 1 ]; then
     five_h="$_hub_five"; seven_d="$_hub_seven"
