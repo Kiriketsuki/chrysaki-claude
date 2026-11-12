@@ -96,5 +96,24 @@ hub_live_write sess-1; rc=$?
 chmod 700 "$CLIPROXY_CACHE_DIR"
 check "a write error returns 0" '[ "$rc" = 0 ]'
 
+# Full script under the mod. The shell must still write the live file.
+NOW=$(date +%s)
+CACHE2="$TMP/cache2"; CONF2="$TMP/conf2"; mkdir -p "$CACHE2" "$CONF2"
+cat > "$CACHE2/work.status.json" <<JSON
+{"updated_epoch":$NOW,"fetched_at":$NOW,"next_seat":"seat-a","seats":[
+ {"seat":"seat-a","state":"open","week_used":0.1,"five_hour_used":0.1,"week_reset_epoch":$((NOW+500000)),"five_hour_reset_epoch":$((NOW+10000))},
+ {"seat":"seat-b","state":"open","week_used":0.2,"five_hour_used":0.2,"week_reset_epoch":$((NOW+300000)),"five_hour_reset_epoch":$((NOW+12000))}]}
+JSON
+: > "$CACHE2/work.status.try"
+printf 'test-key\n' > "$CONF2/work.key"
+printf 'https://hub.invalid/\n' > "$CONF2/work.url"
+printf 'https://hub.invalid/status\n' > "$CONF2/work.status-url"
+STDIN="{\"session_id\":\"sess-mod\",\"cwd\":\"$TMP\",\"rate_limits\":{\"five_hour\":{\"used_percentage\":5,\"resets_at\":$((NOW+12000))},\"seven_day\":{\"used_percentage\":9,\"resets_at\":$((NOW+300000))}}}"
+OUT=$(printf '%s' "$STDIN" | env -i PATH="$PATH" HOME="$TMP/home" XDG_RUNTIME_DIR="$TMP/run" \
+  CLIPROXY_CACHE_DIR="$CACHE2" CLIPROXY_CONF_DIR="$CONF2" CLAUDE_HUB_POOL=work \
+  CHRYSAKI_STATUSLINE_MOD=1 bash "$ROOT/statusline-command.sh" 2>&1)
+check "mod mode writes the live file" 'jq -e ".seat == \"seat-b\"" "$CACHE2/work.live/sess-mod.json" >/dev/null'
+check "mod mode prints nothing" '[ -z "$OUT" ]'
+
 if [ "$FAILS" -gt 0 ]; then printf '%s test(s) failed\n' "$FAILS"; exit 1; fi
 printf 'all tests passed\n'

@@ -11,6 +11,7 @@ usaKi reads the `<pool>.live/` folder to show the live sessions of each seat. It
 
 ## Live session file rules
 
+- The shell script writes the file in both modes. It runs in each session, also when the mod draws the statusline.
 - The shell script and the mod each write the file when they know the seat of the session. A session outside the hub writes nothing.
 - A write goes to a temporary file, then `mv -f`. The folder has mode 700.
 - A file with the same seat that is younger than 60 s stays as it is. A write each 60 s keeps the file inside the 600 s window.
