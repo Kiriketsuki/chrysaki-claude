@@ -25,3 +25,5 @@ Change these in the `/config` menu or under `pluginConfigs.kilint-gate.options` 
 | `python` | `python3` | The interpreter that runs kilint |
 | `profile` | `flavored` | The kilint profile: `flavored`, `strict` or `prose` |
 | `failOn` | `error` | The lowest severity that blocks: `error`, `warn` or `info` |
+
+On Windows the defaults change. The mod runs `python`, because `python3` is a `.cmd` shim there. It builds the kilint path from `CHRYSAKI_VAULT_ROOT`, because a POSIX path names no file there. A value you set yourself stays as it is.
